@@ -1,4 +1,4 @@
-module iterator
+module github.com/hneemann/iterator
 
 go 1.20
 
