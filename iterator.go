@@ -279,9 +279,9 @@ func collectResults[O any](result <-chan container[O], closed chan<- struct{}, p
 	}
 }
 
-// ParallelMap behaves the same as the Map Iterable.
+// MapParallel behaves the same as the Map Iterable.
 // The mapping is distributed over all available cores.
-func ParallelMap[I, O any](in Iterable[I], mapFunc func(int, I) O) Iterable[O] {
+func MapParallel[I, O any](in Iterable[I], mapFunc func(int, I) O) Iterable[O] {
 	return func() Iterator[O] {
 		iter := in()
 		return func(yield func(O) bool) bool {
@@ -296,11 +296,11 @@ func ParallelMap[I, O any](in Iterable[I], mapFunc func(int, I) O) Iterable[O] {
 	}
 }
 
-// AutoMap behaves the same as the Map Iterable.
+// MapAuto behaves the same as the Map Iterable.
 // It is measured how long the map function takes. If the map function requires so much
 // computing time that it is worth distributing it over several cores, the map function
 // is distributed over several cores.
-func AutoMap[I, O any](in Iterable[I], mapFunc func(int, I) O) Iterable[O] {
+func MapAuto[I, O any](in Iterable[I], mapFunc func(int, I) O) Iterable[O] {
 	return func() Iterator[O] {
 		iter := in()
 		return func(yield func(O) bool) bool {
@@ -409,14 +409,14 @@ func Filter[V any](in Iterable[V], accept func(V) bool) Iterable[V] {
 	}
 }
 
-// AutoFilter behaves the same as the Filter Iterable.
+// FilterAuto behaves the same as the Filter Iterable.
 // It is measured how long the accept function takes. If the accept function requires so much
 // computing time that it is worth distributing it over several cores, the filtering
 // is distributed over several cores.
-func AutoFilter[V any](in Iterable[V], accept func(V) bool) Iterable[V] {
+func FilterAuto[V any](in Iterable[V], accept func(V) bool) Iterable[V] {
 	return func() Iterator[V] {
 		return func(yield func(V) bool) bool {
-			return AutoMap(in, func(i int, val V) filterContainer[V] {
+			return MapAuto(in, func(i int, val V) filterContainer[V] {
 				return filterContainer[V]{val, accept(val)}
 			})()(func(v filterContainer[V]) bool {
 				if v.accept {
@@ -434,12 +434,12 @@ type filterContainer[V any] struct {
 	accept bool
 }
 
-// ParallelFilter behaves the same as the Filter Iterable.
+// FilterParallel behaves the same as the Filter Iterable.
 // The filtering is distributed over all available cores.
-func ParallelFilter[V any](in Iterable[V], accept func(V) bool) Iterable[V] {
+func FilterParallel[V any](in Iterable[V], accept func(V) bool) Iterable[V] {
 	return func() Iterator[V] {
 		return func(yield func(V) bool) bool {
-			return ParallelMap[V, filterContainer[V]](in, func(i int, val V) filterContainer[V] {
+			return MapParallel[V, filterContainer[V]](in, func(i int, val V) filterContainer[V] {
 				return filterContainer[V]{val, accept(val)}
 			})()(func(v filterContainer[V]) bool {
 				if v.accept {
@@ -447,6 +447,32 @@ func ParallelFilter[V any](in Iterable[V], accept func(V) bool) Iterable[V] {
 				} else {
 					return true
 				}
+			})
+		}
+	}
+}
+
+// Compact returns an iterable which contains no consecutive duplicates.
+func Compact[V any](items Iterable[V], equal func(V, V) bool) Iterable[V] {
+	return func() Iterator[V] {
+		return func(yield func(V) bool) bool {
+			isLast := false
+			var last V
+			return items()(func(v V) bool {
+				if isLast {
+					if !equal(last, v) {
+						if !yield(v) {
+							return false
+						}
+					}
+				} else {
+					isLast = true
+					if !yield(v) {
+						return false
+					}
+				}
+				last = v
+				return true
 			})
 		}
 	}
@@ -687,11 +713,63 @@ func Reduce[V any](it Iterable[V], reduceFunc func(V, V) V) (V, bool) {
 
 // ReduceParallel usage makes sens only if reduce operation is costly.
 // In cases like a+b, a*b or "if a>b then a else b" it makes no sense at all
-// because synchronization is more expensive as the operation itself.
+// because the synchronization is more expensive than the operation itself.
 // It should always be possible to do the heavy lifting in a map operation and
 // make the reduce operation low cost.
 func ReduceParallel[V any](it Iterable[V], reduceFunc func(V, V) V) (V, bool) {
-	return Reduce(it, reduceFunc) // ToDo implement me
+	valChan, stop, wasPanic := ToChan(it())
+
+	result := make(chan V)
+	var wg sync.WaitGroup
+	for i := 0; i < runtime.NumCPU(); i++ {
+		wg.Add(1)
+		go func() {
+			defer func() {
+				rec := recover()
+				if rec != nil {
+					wasPanic <- rec
+				}
+				wg.Done()
+			}()
+			var sum V
+			isSum := false
+			for v := range valChan {
+				if isSum {
+					sum = reduceFunc(sum, v)
+				} else {
+					sum = v
+					isSum = true
+				}
+			}
+			if isSum {
+				result <- sum
+			}
+		}()
+	}
+	go func() {
+		wg.Wait()
+		close(result)
+	}()
+	var sum V
+	isSum := false
+	for {
+		select {
+		case r, ok := <-result:
+			if ok {
+				if isSum {
+					sum = reduceFunc(sum, r)
+				} else {
+					sum = r
+					isSum = true
+				}
+			} else {
+				return sum, isSum
+			}
+		case p := <-wasPanic:
+			close(stop)
+			panic(p)
+		}
+	}
 }
 
 // MapReduce combines a map and reduce step in one go.

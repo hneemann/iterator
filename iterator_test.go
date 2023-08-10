@@ -16,6 +16,11 @@ func add(a, b int) int {
 	return a + b
 }
 
+func addSlow(a, b int) int {
+	time.Sleep(time.Millisecond * 10)
+	return a + b
+}
+
 func square(i, v int) int {
 	return v * v
 }
@@ -151,6 +156,51 @@ func TestReduce(t *testing.T) {
 	assert.Equal(t, 0, reduce)
 }
 
+func TestReduceParallel(t *testing.T) {
+	reduce, ok := ReduceParallel(ints(11), addSlow)
+	assert.True(t, ok)
+	assert.Equal(t, 55, reduce)
+	reduce, ok = ReduceParallel(Empty[int](), addSlow)
+	assert.False(t, ok)
+	assert.Equal(t, 0, reduce)
+}
+
+func TestReduceParallelPanic1(t *testing.T) {
+	list := Generate(20, func(n int) int {
+		if n == 10 {
+			panic("test")
+		}
+		return n
+	})
+
+	var p any
+	func() {
+		defer func() {
+			p = recover()
+		}()
+		ReduceParallel(list, addSlow)
+	}()
+	assert.Equal(t, "test", p)
+}
+
+func TestReduceParallelPanic2(t *testing.T) {
+	var p any
+	func() {
+		defer func() {
+			p = recover()
+		}()
+		fire := runtime.NumCPU() * 2
+		ReduceParallel(ints(10000), func(a int, b int) int {
+			time.Sleep(time.Millisecond * 30)
+			if b == fire {
+				panic("test")
+			}
+			return a + b
+		})
+	}()
+	assert.Equal(t, "test", p)
+}
+
 func TestMapReduce(t *testing.T) {
 	reduce := MapReduce[float64, int](ints(11), 0.0, func(s float64, i int) float64 {
 		return s + float64(i)
@@ -187,7 +237,7 @@ func TestBreak(t *testing.T) {
 		{name: "append", it: appended(), count: 3},
 		{name: "generate", it: Generate(10, addOne)(), count: 3},
 		{name: "map", it: Map[int](ints(4), square)(), count: 2},
-		{name: "parallelMap", it: ParallelMap[int](ints(40), squareSlow)(), count: 10},
+		{name: "parallelMap", it: MapParallel[int](ints(40), squareSlow)(), count: 10},
 		{name: "filter", it: Filter[int](ints(8), isEven)(), count: 2},
 		{name: "chan", it: FromChan(ToChan[int](ints(10)())), count: 2},
 	}
@@ -286,7 +336,7 @@ func TestIterableThinning(t *testing.T) {
 
 func TestParallelMap(t *testing.T) {
 	src := Generate(20, func(n int) int { return n })
-	ints := ParallelMap(src, func(i, v int) int { return v * 2 })
+	ints := MapParallel(src, func(i, v int) int { return v * 2 })
 	expected := ToSlice(Generate(20, func(n int) int { return n * 2 })())
 	assert.EqualValues(t, expected, ToSlice(ints()))
 }
@@ -295,7 +345,7 @@ func TestParallelMapSlow(t *testing.T) {
 	const count = 500
 	const delay = time.Millisecond * 10
 	all := Generate(count, func(n int) int { return n + 1 })
-	ints := ParallelMap(all, func(n, v int) mapResult {
+	ints := MapParallel(all, func(n, v int) mapResult {
 		time.Sleep(delay)
 		return mapResult{res: v * 2, number: n}
 	})
@@ -320,7 +370,7 @@ func TestParallelMapSlow(t *testing.T) {
 
 func TestParallelFilter(t *testing.T) {
 	ints := Slice([]int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11})
-	ints = ParallelFilter[int](ints, func(v int) bool {
+	ints = FilterParallel[int](ints, func(v int) bool {
 		time.Sleep(time.Millisecond * 10)
 		return v%2 == 0
 	})
@@ -330,7 +380,7 @@ func TestParallelFilter(t *testing.T) {
 
 func TestParallelMapPanic1(t *testing.T) {
 	src := Generate[int](20, func(n int) int { return n })
-	ints := ParallelMap[int, int](src, func(i, v int) int {
+	ints := MapParallel[int, int](src, func(i, v int) int {
 		if v == 7 {
 			panic("test")
 		}
@@ -356,7 +406,7 @@ func TestParallelMapPanic2(t *testing.T) {
 		}
 		return n
 	})
-	ints := ParallelMap[int, int](src, func(i, v int) int { return v * 2 })
+	ints := MapParallel[int, int](src, func(i, v int) int { return v * 2 })
 
 	var p any
 	func() {
@@ -379,7 +429,7 @@ func TestAutoMap(t *testing.T) {
 	const count = itemsToMeasure * 50
 	const delay = time.Millisecond * 10
 	all := Generate[int](count, func(n int) int { return n + 1 })
-	ints := AutoMap[int, mapResult](all, func(n, v int) mapResult {
+	ints := MapAuto[int, mapResult](all, func(n, v int) mapResult {
 		time.Sleep(delay)
 		return mapResult{res: v * 2, number: n}
 	})
@@ -401,7 +451,7 @@ func TestAutoMap(t *testing.T) {
 	fmt.Println("measured:", measuredTime)
 	assert.True(t, measuredTime < (expectedTime+worstTime)/2, "to slow")
 
-	ints = AutoMap[int, mapResult](all, func(n, v int) mapResult {
+	ints = MapAuto[int, mapResult](all, func(n, v int) mapResult {
 		return mapResult{res: v * 2, number: n}
 	})
 	assert.EqualValues(t, expected, ToSlice(ints()))
@@ -410,7 +460,7 @@ func TestAutoMap(t *testing.T) {
 func TestAutoMapShort(t *testing.T) {
 	count := itemsToMeasure
 	all := Generate[int](count, func(n int) int { return n + 1 })
-	ints := AutoMap[int, int](all, func(n, v int) int {
+	ints := MapAuto[int, int](all, func(n, v int) int {
 		return v * 2
 	})
 	expected := ToSlice(Generate[int](count, func(n int) int { return (n + 1) * 2 })())
@@ -422,7 +472,7 @@ func TestAutoFilter(t *testing.T) {
 	const count = itemsToMeasure * 50
 	const delay = time.Millisecond * 10
 	all := Generate[int](count, func(n int) int { return n + 1 })
-	ints := AutoFilter[int](all, func(v int) bool {
+	ints := FilterAuto[int](all, func(v int) bool {
 		time.Sleep(delay)
 		return v%2 == 0
 	})
@@ -450,7 +500,7 @@ func TestAutoFilter(t *testing.T) {
 func TestAutoFilterSerial(t *testing.T) {
 	count := itemsToMeasure * 2
 	all := Generate(count, func(n int) int { return n + 1 })
-	ints := AutoFilter(all, func(v int) bool {
+	ints := FilterAuto(all, func(v int) bool {
 		return v%2 == 0
 	})
 	expected := ToSlice(Generate(count/2, func(n int) int { return (n + 1) * 2 })())
@@ -462,7 +512,7 @@ func TestAutoFilterSerial(t *testing.T) {
 func TestAutoFilterShort(t *testing.T) {
 	count := itemsToMeasure
 	all := Generate(count, func(n int) int { return n + 1 })
-	ints := AutoFilter(all, func(v int) bool {
+	ints := FilterAuto(all, func(v int) bool {
 		time.Sleep(time.Microsecond * itemProcessingTimeMicroSec * 2)
 		return v%2 == 0
 	})
@@ -476,5 +526,27 @@ func Benchmark(b *testing.B) {
 	ints := Generate(1000, func(i int) int { return i })
 	for i := 0; i < b.N; i++ {
 		Reduce(Map(Map(ints, square), square), add)
+	}
+}
+
+func TestRemoveDuplicates(t *testing.T) {
+	type testCase struct {
+		name string
+		it   Iterable[int]
+		want []int
+	}
+	var empty []int
+	tests := []testCase{
+		{name: "no dup", it: Slice([]int{1, 2, 3, 4, 5, 6, 7}), want: []int{1, 2, 3, 4, 5, 6, 7}},
+		{name: "normal", it: Slice([]int{1, 1, 2, 2, 3, 4, 4}), want: []int{1, 2, 3, 4}},
+		{name: "normal", it: Slice([]int{1, 1, 2, 2, 3, 4}), want: []int{1, 2, 3, 4}},
+		{name: "all same", it: Slice([]int{1, 1, 1, 1, 1, 1}), want: []int{1}},
+		{name: "empty", it: Slice([]int{}), want: empty},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			assert.EqualValues(t, test.want, ToSlice(Compact(test.it, equal[int])()))
+		})
 	}
 }
