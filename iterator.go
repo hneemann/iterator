@@ -45,8 +45,10 @@ func Append[V any](iterables ...Iterable[V]) Iterable[V] {
 	return func() Iterator[V] {
 		return func(yield func(V) bool) bool {
 			for _, it := range iterables {
-				if !it()(yield) {
-					return false
+				for v := range it() {
+					if !yield(v) {
+						return false
+					}
 				}
 			}
 			return true
@@ -80,14 +82,14 @@ func ToChan[V any](it Iterator[V]) (<-chan V, chan struct{}, chan any) {
 			}
 			close(c)
 		}()
-		it(func(v V) bool {
+
+		for v := range it {
 			select {
 			case c <- v:
-				return true
 			case <-stop:
-				return false
+				break
 			}
-		})
+		}
 	}()
 	return c, stop, panicChan
 }
@@ -117,10 +119,9 @@ func FromChan[V any](c <-chan V, stop chan<- struct{}, panicChan <-chan any) Ite
 // ToSlice reads all items from the Iterator and stores them in a slice.
 func ToSlice[V any](it Iterator[V]) []V {
 	var sl []V
-	it(func(v V) bool {
+	for v := range it {
 		sl = append(sl, v)
-		return true
-	})
+	}
 	return sl
 }
 
@@ -186,13 +187,13 @@ func Map[I, O any](in Iterable[I], mapFunc func(int, I) O) Iterable[O] {
 
 func mapIterator[I, O any](iter Iterator[I], mapFunc func(int, I) O, num int) Iterator[O] {
 	return func(yield func(O) bool) bool {
-		return iter(func(item I) bool {
+		for item := range iter {
 			if !yield(mapFunc(num, item)) {
 				return false
 			}
 			num++
-			return true
-		})
+		}
+		return true
 	}
 }
 
@@ -306,14 +307,16 @@ func AutoMap[I, O any](in Iterable[I], mapFunc func(int, I) O) Iterable[O] {
 		return func(yield func(O) bool) bool {
 			next := measure[I, O](yield, mapFunc)
 			var cleanUp func()
-			ok := iter(func(item I) bool {
+			for item := range iter {
 				next, cleanUp = next(item)
-				return next != nil
-			})
+				if next == nil {
+					break
+				}
+			}
 			if cleanUp != nil {
 				cleanUp()
 			}
-			return ok
+			return true
 		}
 	}
 }
@@ -397,14 +400,14 @@ func parallel[I, O any](yield func(O) bool, mapFunc func(int, I) O, num int) (ne
 func Filter[V any](in Iterable[V], accept func(V) bool) Iterable[V] {
 	return func() Iterator[V] {
 		return func(yield func(V) bool) bool {
-			return in()(func(v V) bool {
+			for v := range in() {
 				if accept(v) {
 					if !yield(v) {
 						return false
 					}
 				}
-				return true
-			})
+			}
+			return true
 		}
 	}
 }
@@ -459,18 +462,19 @@ func Combine[I, O any](in Iterable[I], combine func(I, I) O) Iterable[O] {
 		return func(yield func(O) bool) bool {
 			isValue := false
 			var last I
-			return in()(func(i I) bool {
+			for i := range in() {
 				if isValue {
 					o := combine(last, i)
 					if !yield(o) {
 						return false
+						break
 					}
 				} else {
 					isValue = true
 				}
 				last = i
-				return true
-			})
+			}
+			return true
 		}
 	}
 }
@@ -569,15 +573,15 @@ func Merge[V any](ai, bi Iterable[V], less func(V, V) bool) Iterable[V] {
 func Cross[A, B, C any](a Iterable[A], b Iterable[B], cross func(A, B) C) Iterable[C] {
 	return func() Iterator[C] {
 		return func(yield func(C) bool) bool {
-			return a()(func(a A) bool {
-				return b()(func(b B) bool {
-					c := cross(a, b)
+			for aa := range a() {
+				for bb := range b() {
+					c := cross(aa, bb)
 					if !yield(c) {
 						return false
 					}
-					return true
-				})
-			})
+				}
+			}
+			return true
 		}
 	}
 }
@@ -591,7 +595,7 @@ func IirMap[I any, R any](items Iterable[I], initial func(item I) R, iir func(it
 			isLast := false
 			var lastItem I
 			var last R
-			return items()(func(i I) bool {
+			for i := range items() {
 				if isLast {
 					last = iir(i, lastItem, last)
 				} else {
@@ -599,8 +603,11 @@ func IirMap[I any, R any](items Iterable[I], initial func(item I) R, iir func(it
 					isLast = true
 				}
 				lastItem = i
-				return yield(last)
-			})
+				if !yield(last) {
+					return true
+				}
+			}
+			return true
 		}
 	}
 }
@@ -610,14 +617,17 @@ func FirstN[V any](items Iterable[V], n int) Iterable[V] {
 	return func() Iterator[V] {
 		return func(yield func(V) bool) bool {
 			i := 0
-			return items()(func(v V) bool {
+			for v := range items() {
 				if i < n {
 					i++
-					return yield(v)
+					if !yield(v) {
+						return false
+					}
 				} else {
-					return false
+					return true
 				}
-			})
+			}
+			return true
 		}
 	}
 }
@@ -628,14 +638,16 @@ func Skip[V any](items Iterable[V], n int) Iterable[V] {
 	return func() Iterator[V] {
 		return func(yield func(V) bool) bool {
 			i := 0
-			return items()(func(v V) bool {
+			for v := range items() {
 				if i < n {
 					i++
-					return true
 				} else {
-					return yield(v)
+					if !yield(v) {
+						return false
+					}
 				}
-			})
+			}
+			return true
 		}
 	}
 }
@@ -648,23 +660,21 @@ func Thinning[V any](items Iterable[V], n int) Iterable[V] {
 		return func(yield func(V) bool) bool {
 			i := 0
 			var skipped V
-			if items()(func(v V) bool {
+			for v := range items() {
 				if i == 0 {
 					i = n
-					return yield(v)
+					if !yield(v) {
+						return false
+					}
 				} else {
 					skipped = v
 					i--
-					return true
-				}
-			}) {
-				if i < n {
-					return yield(skipped)
-				} else {
-					return true
 				}
 			}
-			return false
+			if i < n {
+				return yield(skipped)
+			}
+			return true
 		}
 	}
 }
@@ -673,15 +683,14 @@ func Thinning[V any](items Iterable[V], n int) Iterable[V] {
 func Reduce[V any](it Iterable[V], reduceFunc func(V, V) V) (V, bool) {
 	var sum V
 	isValue := false
-	it()(func(v V) bool {
+	for v := range it() {
 		if isValue {
 			sum = reduceFunc(sum, v)
 		} else {
 			sum = v
 			isValue = true
 		}
-		return true
-	})
+	}
 	return sum, isValue
 }
 
@@ -700,10 +709,9 @@ func ReduceParallel[V any](it Iterable[V], reduceFunc func(V, V) V) (V, bool) {
 // can write  mapReduce(0, (s,n)->s+n^2)
 // Useful if map and reduce are both low cost operations.
 func MapReduce[S, V any](it Iterable[V], initial S, reduceFunc func(S, V) S) S {
-	it()(func(v V) bool {
+	for v := range it() {
 		initial = reduceFunc(initial, v)
-		return true
-	})
+	}
 	return initial
 }
 
@@ -712,11 +720,11 @@ func MapReduce[S, V any](it Iterable[V], initial S, reduceFunc func(S, V) S) S {
 func First[V any](in Iterable[V]) (V, bool) {
 	var first V
 	isFirst := false
-	in()(func(v V) bool {
+	for v := range in() {
 		first = v
 		isFirst = true
-		return false
-	})
+		break
+	}
 	return first, isFirst
 }
 
