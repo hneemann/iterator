@@ -126,26 +126,53 @@ func ToSlice[V any](it Iterator[V]) []V {
 
 // Equals checks if the two Iterators are equal.
 func Equals[V any](i1, i2 Iterator[V], equals func(V, V) bool) bool {
-	c1, stop1, _ := ToChan(i1) // ToDo panicing ???
-	c2, stop2, _ := ToChan(i2)
+	cMain1, stop1, p1 := ToChan(i1)
+	cMain2, stop2, p2 := ToChan(i2)
 	defer func() {
 		close(stop1)
 		close(stop2)
 	}()
 
+	var item1, item2 V
+	var ok1, ok2 bool
+	c1 := cMain1
+	c2 := cMain2
 	for {
-		item1, ok1 := <-c1
-		item2, ok2 := <-c2
-		if ok1 != ok2 {
-			return false
-		} else {
-			if ok1 {
-				if !equals(item1, item2) {
+		select {
+		case item1, ok1 = <-c1:
+			c1 = nil
+			if c2 == nil {
+				if !ok1 && !ok2 {
+					return true
+				} else if ok1 != ok2 {
 					return false
+				} else if ok1 && ok2 {
+					if !equals(item1, item2) {
+						return false
+					}
+					c1 = cMain1
+					c2 = cMain2
 				}
-			} else {
-				return true
 			}
+		case item2, ok2 = <-c2:
+			c2 = nil
+			if c1 == nil {
+				if !ok1 && !ok2 {
+					return true
+				} else if ok1 != ok2 {
+					return false
+				} else if ok1 && ok2 {
+					if !equals(item1, item2) {
+						return false
+					}
+					c1 = cMain1
+					c2 = cMain2
+				}
+			}
+		case p := <-p1:
+			panic(p)
+		case p := <-p2:
+			panic(p)
 		}
 	}
 }

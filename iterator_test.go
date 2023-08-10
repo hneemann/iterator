@@ -101,6 +101,25 @@ func TestEquals(t *testing.T) {
 	}
 }
 
+func TestEqualsPanic(t *testing.T) {
+	l1 := Generate(20, func(n int) int { return n })
+	l2 := Generate(20, func(n int) int {
+		if n == 10 {
+			panic("test")
+		}
+		return n
+	})
+
+	var p any
+	func() {
+		defer func() {
+			p = recover()
+		}()
+		Equals(l1(), l2(), equal[int])
+	}()
+	assert.Equal(t, "test", p)
+}
+
 func TestFirst(t *testing.T) {
 	type testCase[V any] struct {
 		name string
