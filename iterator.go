@@ -642,6 +642,7 @@ func Thinning[V any](items Iterable[V], n int) Iterable[V] {
 	}
 }
 
+// Reduce reduces the items of the iterable to a single value by calling the reduce function.
 func Reduce[V any](it Iterable[V], reduceFunc func(V, V) V) (V, bool) {
 	var sum V
 	isValue := false
@@ -657,6 +658,20 @@ func Reduce[V any](it Iterable[V], reduceFunc func(V, V) V) (V, bool) {
 	return sum, isValue
 }
 
+// ReduceParallel usage makes sens only if reduce operation is costly.
+// In cases like a+b, a*b or "if a>b then a else b" it makes no sense at all
+// because synchronization is more expensive as the operation itself.
+// It should always be possible to do the heavy lifting in a map operation and
+// make the reduce operation low cost.
+func ReduceParallel[V any](it Iterable[V], reduceFunc func(V, V) V) (V, bool) {
+	return Reduce(it, reduceFunc) // ToDo implement me
+}
+
+// MapReduce combines a map and reduce step in one go.
+// Avoids generating intermediate map results.
+// Instead of map(n->n^2).reduce((a,b)->a+b) one
+// can write  mapReduce(0, (s,n)->s+n^2)
+// Useful if map and reduce are both low cost operations.
 func MapReduce[S, V any](it Iterable[V], initial S, reduceFunc func(S, V) S) S {
 	it()(func(v V) bool {
 		initial = reduceFunc(initial, v)
@@ -665,6 +680,8 @@ func MapReduce[S, V any](it Iterable[V], initial S, reduceFunc func(S, V) S) S {
 	return initial
 }
 
+// First returns the first item of the iterator
+// The returned bool is false if there is no item because iterator is empty.
 func First[V any](in Iterable[V]) (V, bool) {
 	var first V
 	isFirst := false
@@ -676,6 +693,10 @@ func First[V any](in Iterable[V]) (V, bool) {
 	return first, isFirst
 }
 
+// Peek takes an iterator, gives a new iterator and the first item of the given iterator.
+// The returned iterator still iterates all items including the first one.
+// Expensive because all items have to go through a channel.
+// Use only if the creation of the original iterator is even more expensive.
 func Peek[V any](it Iterator[V]) (Iterator[V], V, bool) {
 	c, stop, panicChan := ToChan[V](it)
 	var first V
