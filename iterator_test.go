@@ -396,9 +396,7 @@ func TestAutoMapShort(t *testing.T) {
 	})
 	expected := ToSlice(Generate[int](count, func(n int) int { return (n + 1) * 2 })())
 	assert.EqualValues(t, expected, ToSlice(ints()))
-	//assert.True(t, (it.(*iteratorAutoMap[int, int])).mode == mMeasure)
 	assert.EqualValues(t, expected, ToSlice(ints()))
-	//assert.True(t, (it.(*iteratorAutoMap[int, int])).mode == mMeasure)
 }
 
 func TestAutoFilter(t *testing.T) {
@@ -427,9 +425,7 @@ func TestAutoFilter(t *testing.T) {
 	assert.True(t, measuredTime < (expectedTime+worstTime)/2, "to slow")
 
 	assert.EqualValues(t, expected, slice)
-	//assert.True(t, (it.(*iteratorAutoFilter[int])).mode == mParallel)
 	assert.EqualValues(t, expected, ToSlice(ints()))
-	//assert.True(t, (it.(*iteratorAutoFilter[int])).mode == mParallel)
 }
 
 func TestAutoFilterSerial(t *testing.T) {
@@ -441,9 +437,7 @@ func TestAutoFilterSerial(t *testing.T) {
 	expected := ToSlice(Generate(count/2, func(n int) int { return (n + 1) * 2 })())
 
 	assert.EqualValues(t, expected, ToSlice(ints()))
-	//assert.True(t, (it.(*iteratorAutoFilter[int])).mode == mSerial)
 	assert.EqualValues(t, expected, ToSlice(ints()))
-	//assert.True(t, (it.(*iteratorAutoFilter[int])).mode == mSerial)
 }
 
 func TestAutoFilterShort(t *testing.T) {
@@ -456,7 +450,12 @@ func TestAutoFilterShort(t *testing.T) {
 	expected := ToSlice(Generate(count/2, func(n int) int { return (n + 1) * 2 })())
 
 	assert.EqualValues(t, expected, ToSlice(ints()))
-	//assert.True(t, (it.(*iteratorAutoFilter[int])).mode == mMeasure)
 	assert.EqualValues(t, expected, ToSlice(ints()))
-	//assert.True(t, (it.(*iteratorAutoFilter[int])).mode == mMeasure)
+}
+
+func Benchmark(b *testing.B) {
+	ints := Generate(1000, func(i int) int { return i })
+	for i := 0; i < b.N; i++ {
+		Reduce(Map(Map(ints, square), square), add)
+	}
 }
