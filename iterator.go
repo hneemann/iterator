@@ -1,6 +1,7 @@
 package iterator
 
 import (
+	"log"
 	"runtime"
 	"sync"
 	"time"
@@ -345,6 +346,7 @@ func measure[I, O any](yield func(O) bool, mapFunc func(int, I) O) nextType[I] {
 			return meas, nil
 		} else {
 			if dur.Microseconds() > itemProcessingTimeMicroSec*int64(count) {
+				log.Printf("switched to parallel map: time spend in mapFunc call: %v", dur/itemsToMeasure)
 				return parallel(yield, mapFunc, count)
 			} else {
 				return serial(yield, mapFunc, count)
