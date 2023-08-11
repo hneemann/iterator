@@ -486,6 +486,34 @@ func Compact[V any](items Iterable[V], equal func(V, V) bool) Iterable[V] {
 	}
 }
 
+// Group returns an iterable which contains iterables of equal values
+func Group[V any](items Iterable[V], equal func(V, V) bool) Iterable[Iterable[V]] {
+	return func() Iterator[Iterable[V]] {
+		return func(yield func(Iterable[V]) bool) bool {
+			var list []V
+			ok := items()(func(v V) bool {
+				if len(list) > 0 {
+					if equal(list[len(list)-1], v) {
+						list = append(list, v)
+					} else {
+						if !yield(Slice(list)) {
+							return false
+						}
+						list = []V{v}
+					}
+				} else {
+					list = []V{v}
+				}
+				return true
+			})
+			if ok && len(list) > 0 {
+				return yield(Slice(list))
+			}
+			return ok
+		}
+	}
+}
+
 // Combine maps two consecutive elements to a new element.
 // The generated iterable has one element less than the original iterable.
 func Combine[I, O any](in Iterable[I], combine func(I, I) O) Iterable[O] {
