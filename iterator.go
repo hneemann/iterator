@@ -514,6 +514,34 @@ func Group[V any](items Iterable[V], equal func(V, V) bool) Iterable[Iterable[V]
 	}
 }
 
+// GroupByKey returns an iterable which contains iterables or items with equal keys
+func GroupByKey[V any, K ~string | ~int](items Iterable[V], key func(V) K) Iterable[Iterable[V]] {
+	return func() Iterator[Iterable[V]] {
+		return func(yield func(Iterable[V]) bool) bool {
+			var ol []*[]V
+			m := map[K]*[]V{}
+			items()(func(v V) bool {
+				k := key(v)
+				list := m[k]
+				if list == nil {
+					l := &[]V{v}
+					m[k] = l
+					ol = append(ol, l)
+				} else {
+					*list = append(*list, v)
+				}
+				return true
+			})
+			for _, l := range ol {
+				if !yield(Slice(*l)) {
+					return false
+				}
+			}
+			return true
+		}
+	}
+}
+
 // Combine maps two consecutive elements to a new element.
 // The generated iterable has one element less than the original iterable.
 func Combine[I, O any](in Iterable[I], combine func(I, I) O) Iterable[O] {

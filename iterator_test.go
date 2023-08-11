@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"github.com/stretchr/testify/assert"
 	"runtime"
+	"strconv"
 	"testing"
 	"time"
 )
@@ -563,6 +564,37 @@ func TestGroup(t *testing.T) {
 		test := test
 		t.Run(test.name, func(t *testing.T) {
 			got := ToSlice(Group(test.it, equal[int])())
+			assert.Equal(t, len(test.want), len(got))
+			for i, w := range test.want {
+				g := ToSlice(got[i]())
+				assert.EqualValues(t, w, g)
+			}
+		})
+	}
+}
+
+func TestGroupByKey(t *testing.T) {
+	type testCase struct {
+		name string
+		it   Iterable[int]
+		want [][]int
+	}
+	var empty [][]int
+	tests := []testCase{
+		{name: "no dup", it: Slice([]int{1, 2, 3, 4, 5, 6, 7}), want: [][]int{{1}, {2}, {3}, {4}, {5}, {6}, {7}}},
+		{name: "normal", it: Slice([]int{1, 1, 2, 2, 3, 4, 4}), want: [][]int{{1, 1}, {2, 2}, {3}, {4, 4}}},
+		{name: "normal", it: Slice([]int{1, 2, 3, 1, 4, 2, 4}), want: [][]int{{1, 1}, {2, 2}, {3}, {4, 4}}},
+		{name: "normal", it: Slice([]int{1, 1, 2, 2, 3, 4}), want: [][]int{{1, 1}, {2, 2}, {3}, {4}}},
+		{name: "normal", it: Slice([]int{1, 2, 1, 2, 3, 4}), want: [][]int{{1, 1}, {2, 2}, {3}, {4}}},
+		{name: "all same", it: Slice([]int{1, 1, 1, 1, 1, 1}), want: [][]int{{1, 1, 1, 1, 1, 1}}},
+		{name: "empty", it: Slice([]int{}), want: empty},
+	}
+	for _, test := range tests {
+		test := test
+		t.Run(test.name, func(t *testing.T) {
+			got := ToSlice(GroupByKey(test.it, func(i int) string {
+				return strconv.Itoa(i)
+			})())
 			assert.Equal(t, len(test.want), len(got))
 			for i, w := range test.want {
 				g := ToSlice(got[i]())
