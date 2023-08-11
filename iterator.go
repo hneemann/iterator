@@ -391,12 +391,14 @@ func parallel[I, O any](yield func(O) bool, mapFunc func(int, I) O, num int) (ne
 			return par, cleanUp
 		case <-stop:
 			return nil, cleanUp
+		case p := <-panicChan:
+			panic(p)
 		}
 	}
 
 	result := splitWork(jobs, stop, panicChan, mapFunc)
 
-	go collectResults(result, stop, panicChan, ack, yield, num)
+	go collectResults(result, stop, nil, ack, yield, num)
 
 	return par, cleanUp
 }
