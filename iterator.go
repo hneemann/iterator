@@ -299,8 +299,12 @@ func MapParallel[I, O any](in Iterable[I], mapFunc func(int, I) O) Iterable[O] {
 // MapAuto behaves the same as the Map Iterable.
 // It is measured how long the map function takes. If the map function requires so much
 // computing time that it is worth distributing it over several cores, the map function
-// is distributed over several cores.
+// is distributed over all available cores (reported by runtime.NumCPU()).
 func MapAuto[I, O any](in Iterable[I], mapFunc func(int, I) O) Iterable[O] {
+	if runtime.NumCPU() == 1 {
+		return Map(in, mapFunc)
+	}
+
 	return func() Iterator[O] {
 		iter := in()
 		return func(yield func(O) bool) bool {
@@ -414,6 +418,10 @@ func Filter[V any](in Iterable[V], accept func(V) bool) Iterable[V] {
 // computing time that it is worth distributing it over several cores, the filtering
 // is distributed over several cores.
 func FilterAuto[V any](in Iterable[V], accept func(V) bool) Iterable[V] {
+	if runtime.NumCPU() == 1 {
+		return Filter(in, accept)
+	}
+
 	return func() Iterator[V] {
 		return func(yield func(V) bool) bool {
 			return MapAuto(in, func(i int, val V) filterContainer[V] {
