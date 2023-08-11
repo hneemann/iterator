@@ -96,16 +96,15 @@ func ToChan[V any](it Iterator[V]) (<-chan V, chan struct{}, chan any) {
 // FromChan reads items from a channel
 func FromChan[V any](c <-chan V, stop chan<- struct{}, panicChan <-chan any) Iterator[V] {
 	return func(yield func(V) bool) bool {
+		defer close(stop)
 		for {
 			select {
 			case v, ok := <-c:
 				if ok {
 					if !yield(v) {
-						close(stop)
 						return false
 					}
 				} else {
-					close(stop)
 					return true
 				}
 			case p := <-panicChan:
