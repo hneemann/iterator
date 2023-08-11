@@ -26,7 +26,7 @@ func square(i, v int) int {
 }
 
 func squareSlow(i, v int) int {
-	time.Sleep(time.Millisecond * 10)
+	time.Sleep(time.Microsecond * itemProcessingTimeMicroSec * 2)
 	return v * v
 }
 
@@ -361,7 +361,8 @@ func TestParallelMapSlow(t *testing.T) {
 	expectedTime := count * delay / time.Duration(runtime.NumCPU())
 
 	fmt.Println("count:", count)
-	fmt.Println("worst:", worstTime)
+	fmt.Println("infinit cores:", delay)
+	fmt.Println("single core:", worstTime)
 	fmt.Println("expected", expectedTime)
 	fmt.Println("measured:", measuredTime)
 
@@ -445,8 +446,8 @@ func TestAutoMap(t *testing.T) {
 	assert.EqualValues(t, expected, slice)
 
 	fmt.Println("count:", count)
-	fmt.Println("infinite cores:", time.Duration(itemsToMeasure)*delay)
-	fmt.Println("worst:", worstTime)
+	fmt.Println("infinite cores:", time.Duration(itemsToMeasure+1)*delay)
+	fmt.Println("single core:", worstTime)
 	fmt.Println("expected", expectedTime)
 	fmt.Println("measured:", measuredTime)
 	assert.True(t, measuredTime < (expectedTime+worstTime)/2, "to slow")
@@ -486,8 +487,8 @@ func TestAutoFilter(t *testing.T) {
 	assert.EqualValues(t, expected, slice)
 
 	fmt.Println("count:", count)
-	fmt.Println("infinite cores:", time.Duration(itemsToMeasure)*delay)
-	fmt.Println("worst:", worstTime)
+	fmt.Println("infinite cores:", time.Duration(itemsToMeasure+1)*delay)
+	fmt.Println("single core:", worstTime)
 	fmt.Println("expected", expectedTime)
 	fmt.Println("measured:", measuredTime)
 
@@ -522,13 +523,6 @@ func TestAutoFilterShort(t *testing.T) {
 	assert.EqualValues(t, expected, ToSlice(ints()))
 }
 
-func Benchmark(b *testing.B) {
-	ints := Generate(1000, func(i int) int { return i })
-	for i := 0; i < b.N; i++ {
-		Reduce(Map(Map(ints, square), square), add)
-	}
-}
-
 func TestRemoveDuplicates(t *testing.T) {
 	type testCase struct {
 		name string
@@ -548,5 +542,47 @@ func TestRemoveDuplicates(t *testing.T) {
 		t.Run(test.name, func(t *testing.T) {
 			assert.EqualValues(t, test.want, ToSlice(Compact(test.it, equal[int])()))
 		})
+	}
+}
+
+func BenchmarkMap(b *testing.B) {
+	ints := Generate(10000, func(i int) int { return i })
+	for i := 0; i < b.N; i++ {
+		Reduce(Map(ints, square), add)
+	}
+}
+
+func BenchmarkMapAuto(b *testing.B) {
+	ints := Generate(10000, func(i int) int { return i })
+	for i := 0; i < b.N; i++ {
+		Reduce(MapAuto(ints, square), add)
+	}
+}
+
+func BenchmarkMapParallel(b *testing.B) {
+	ints := Generate(10000, func(i int) int { return i })
+	for i := 0; i < b.N; i++ {
+		Reduce(MapParallel(ints, square), add)
+	}
+}
+
+func BenchmarkSMap(b *testing.B) {
+	ints := Generate(100, func(i int) int { return i })
+	for i := 0; i < b.N; i++ {
+		Reduce(Map(ints, squareSlow), add)
+	}
+}
+
+func BenchmarkSMapAuto(b *testing.B) {
+	ints := Generate(100, func(i int) int { return i })
+	for i := 0; i < b.N; i++ {
+		Reduce(MapAuto(ints, squareSlow), add)
+	}
+}
+
+func BenchmarkSMapParallel(b *testing.B) {
+	ints := Generate(100, func(i int) int { return i })
+	for i := 0; i < b.N; i++ {
+		Reduce(MapParallel(ints, squareSlow), add)
 	}
 }
