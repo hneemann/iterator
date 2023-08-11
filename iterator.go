@@ -337,7 +337,10 @@ func measure[I, O any](yield func(O) bool, mapFunc func(int, I) O) nextType[I] {
 	meas = func(v I) (nextType[I], func()) {
 		start := time.Now()
 		o := mapFunc(count, v)
-		dur += time.Now().Sub(start)
+		if count > 0 {
+			// ignore first call to avoid errors due to setup costs
+			dur += time.Now().Sub(start)
+		}
 		if !yield(o) {
 			return nil, nil
 		}
@@ -345,8 +348,8 @@ func measure[I, O any](yield func(O) bool, mapFunc func(int, I) O) nextType[I] {
 		if count < itemsToMeasure {
 			return meas, nil
 		} else {
-			if dur.Microseconds() > itemProcessingTimeMicroSec*int64(count) {
-				log.Printf("switched to parallel map: time spend in mapFunc call: %v", dur/itemsToMeasure)
+			if dur.Microseconds() > itemProcessingTimeMicroSec*int64(count-1) {
+				log.Printf("switched to parallel map: time spend in mapFunc call: %v", dur/(itemsToMeasure-1))
 				return parallel(yield, mapFunc, count)
 			} else {
 				return serial(yield, mapFunc, count)
