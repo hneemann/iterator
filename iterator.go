@@ -326,7 +326,7 @@ type nextType[V any] func(v V) (nextType[V], func())
 
 const (
 	itemProcessingTimeMicroSec = 200
-	itemsToMeasure             = 10
+	itemsToMeasure             = 11
 )
 
 func measure[I, O any](yield func(O) bool, mapFunc func(int, I) O) nextType[I] {
@@ -348,7 +348,7 @@ func measure[I, O any](yield func(O) bool, mapFunc func(int, I) O) nextType[I] {
 			return meas, nil
 		} else {
 			if dur.Microseconds() > itemProcessingTimeMicroSec*int64(count-1) {
-				log.Printf("switched to parallel map: time spend in mapFunc call: %v", dur/(itemsToMeasure-1))
+				log.Printf("switched to parallel map: time spend in measured mapFunc calls: %v", dur/(itemsToMeasure-1))
 				return parallel(yield, mapFunc, count)
 			} else {
 				return serial(yield, mapFunc, count)
@@ -377,13 +377,14 @@ func parallel[I, O any](yield func(O) bool, mapFunc func(int, I) O, num int) (ne
 	panicChan := make(chan any)
 	ack := make(chan struct{})
 
+	i := num
 	cleanUp := func() {
 		close(jobs)
 		<-ack
+		log.Printf("items mapped in parallel: %d", i-itemsToMeasure)
 	}
 
 	var par nextType[I]
-	i := num
 	par = func(v I) (nextType[I], func()) {
 		select {
 		case jobs <- container[I]{i, v}:
