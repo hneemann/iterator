@@ -94,7 +94,7 @@ func ToChan[V any](it Iterator[V]) (<-chan V, chan struct{}, chan any) {
 }
 
 // FromChan reads items from a channel
-func FromChan[V any](c <-chan V, stop chan<- struct{}, panicChan <-chan any) Iterator[V] {
+func FromChan[V any](c <-chan V, stop chan<- struct{}, panicReadeAndFire <-chan any) Iterator[V] {
 	return func(yield func(V) bool) bool {
 		defer close(stop)
 		for {
@@ -107,7 +107,7 @@ func FromChan[V any](c <-chan V, stop chan<- struct{}, panicChan <-chan any) Ite
 				} else {
 					return true
 				}
-			case p := <-panicChan:
+			case p := <-panicReadeAndFire:
 				panic(p)
 			}
 		}
@@ -232,7 +232,7 @@ func splitWork[I, O any](jobs <-chan container[I], closed <-chan struct{}, panic
 	return result
 }
 
-func collectResults[O any](result <-chan container[O], closed chan<- struct{}, panicChan <-chan any, ack chan<- struct{}, yield func(o O) bool, num int) bool {
+func collectResults[O any](result <-chan container[O], closed chan<- struct{}, panicReadAndFire <-chan any, ack chan<- struct{}, yield func(o O) bool, num int) bool {
 	if ack != nil {
 		defer close(ack)
 	}
@@ -273,7 +273,7 @@ func collectResults[O any](result <-chan container[O], closed chan<- struct{}, p
 			} else {
 				return sendAvail()
 			}
-		case p := <-panicChan:
+		case p := <-panicReadAndFire:
 			panic(p)
 		}
 	}
