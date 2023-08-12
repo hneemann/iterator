@@ -80,6 +80,7 @@ func ToChan[V any](it Iterator[V]) (<-chan V, chan struct{}, chan any) {
 				panicChan <- rec
 			}
 			close(c)
+			c = nil
 		}()
 		it(func(v V) bool {
 			select {
