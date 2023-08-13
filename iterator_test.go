@@ -470,6 +470,48 @@ func TestAutoMapShort(t *testing.T) {
 	assert.EqualValues(t, expected, ToSlice(ints()))
 }
 
+func TestAutoMapPanicEarly1(t *testing.T) {
+	src := Generate[int](20, func(n int) int {
+		if n == 5 {
+			panic("test")
+		}
+		return n
+	})
+	ints := MapAuto[int, int](src, func(i, v int) int { return v * 2 })
+
+	var p any
+	func() {
+		defer func() {
+			p = recover()
+		}()
+		ints()(func(i int) bool {
+			return true
+		})
+	}()
+	assert.Equal(t, "test", p)
+}
+
+func TestAutoMapPanicEarly2(t *testing.T) {
+	src := Generate[int](20, func(n int) int { return n })
+	ints := MapAuto[int, int](src, func(i, v int) int {
+		if i == 4 {
+			panic("test")
+		}
+		return v * 2
+	})
+
+	var p any
+	func() {
+		defer func() {
+			p = recover()
+		}()
+		ints()(func(i int) bool {
+			return true
+		})
+	}()
+	assert.Equal(t, "test", p)
+}
+
 func TestAutoFilter(t *testing.T) {
 	const count = itemsToMeasure * 50
 	const delay = time.Millisecond * 10
