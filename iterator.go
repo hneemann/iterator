@@ -73,18 +73,19 @@ func ToChan[V any](it Iterator[V]) (<-chan V, chan struct{}, chan any) {
 	c := make(chan V)
 	stop := make(chan struct{})
 	panicChan := make(chan any)
+	innerChannel := c
 	go func() {
 		defer func() {
 			rec := recover()
 			if rec != nil {
 				panicChan <- rec
 			}
-			close(c)
-			c = nil
+			close(innerChannel)
+			innerChannel = nil
 		}()
 		it(func(v V) bool {
 			select {
-			case c <- v:
+			case innerChannel <- v:
 				return true
 			case <-stop:
 				return false
