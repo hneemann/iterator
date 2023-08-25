@@ -401,7 +401,15 @@ func parallel[I, O any](yield func(O) bool, mapFunc func(int, I) O, num int) (ne
 
 	result := splitWork(jobs, stop, panicChan, mapFunc)
 
-	go collectResults(result, stop, nil, ack, yield, num)
+	go func() {
+		defer func() {
+			rec := recover()
+			if rec != nil {
+				panicChan <- rec
+			}
+		}()
+		collectResults(result, stop, nil, ack, yield, num)
+	}()
 
 	return par, cleanUp
 }
