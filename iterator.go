@@ -582,6 +582,61 @@ func Combine[I, O any](in Iterable[I], combine func(I, I) O) Iterable[O] {
 	}
 }
 
+// Combine3 maps three consecutive elements to a new element.
+// The generated iterable has two elements less than the original iterable.
+func Combine3[I, O any](in Iterable[I], combine func(I, I, I) O) Iterable[O] {
+	return func() Iterator[O] {
+		return func(yield func(O) bool) bool {
+			valuesPresent := 0
+			var lastLast, last I
+			return in()(func(i I) bool {
+				switch valuesPresent {
+				case 0:
+					valuesPresent = 1
+					lastLast = i
+					return true
+				case 1:
+					valuesPresent = 2
+					last = i
+					return true
+				default:
+					o := combine(lastLast, last, i)
+					lastLast = last
+					last = i
+					return yield(o)
+				}
+			})
+		}
+	}
+}
+
+// CombineN maps N consecutive elements to a new element.
+// The generated iterable has (N-1) elements less than the original iterable.
+func CombineN[I, O any](in Iterable[I], n int, combine func(i0 int, v []I) O) Iterable[O] {
+	return func() Iterator[O] {
+		return func(yield func(O) bool) bool {
+			valuesPresent := 0
+			pos := 0
+			vals := make([]I, n, n)
+			return in()(func(i I) bool {
+				vals[pos] = i
+				pos++
+				if pos == n {
+					pos = 0
+				}
+				if valuesPresent < n {
+					valuesPresent++
+				}
+				if valuesPresent == n {
+					o := combine(pos, vals)
+					return yield(o)
+				}
+				return true
+			})
+		}
+	}
+}
+
 // Merge is used to merge two iterables.
 // The less function determines which element to take first
 // Makes sens only if the provided iterables are ordered.

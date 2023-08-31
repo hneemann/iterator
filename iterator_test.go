@@ -275,6 +275,30 @@ func TestIterableCombine(t *testing.T) {
 	check(t, Combine(Slice([]int{}), add))
 }
 
+func add3(a, b, c int) int {
+	return a + b + c
+}
+
+func TestIterableCombine3(t *testing.T) {
+	check(t, Combine3(Slice([]int{1, 2, 3, 4, 5}), add3), 6, 9, 12)
+	check(t, Combine3(Slice([]int{1, 2, 3}), add3), 6)
+	check(t, Combine3(Slice([]int{1, 2}), add3))
+	check(t, Combine3(Slice([]int{1}), add3))
+	check(t, Combine3(Slice([]int{}), add3))
+}
+
+func add3n(pos int, v []int) int {
+	return v[0] + v[1] + v[2]
+}
+
+func TestIterableCombineN(t *testing.T) {
+	check(t, CombineN(Slice([]int{1, 2, 3, 4, 5, 6}), 3, add3n), 6, 9, 12, 15)
+	check(t, CombineN(Slice([]int{1, 2, 3}), 3, add3n), 6)
+	check(t, CombineN(Slice([]int{1, 2}), 3, add3n))
+	check(t, CombineN(Slice([]int{1}), 3, add3n))
+	check(t, CombineN(Slice([]int{}), 3, add3n))
+}
+
 func TestIterableMerge(t *testing.T) {
 	less := func(i1, i2 int) bool {
 		return i1 < i2
