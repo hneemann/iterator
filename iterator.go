@@ -699,6 +699,52 @@ func Merge[V any](ai, bi Iterable[V], less func(V, V) bool) Iterable[V] {
 	}
 }
 
+// MergeElements is used to merge two iterables.
+// The combine function creates the result of combining the two elements.
+// The iterables must have the same size.
+func MergeElements[A, B, C any](ai Iterable[A], bi Iterable[B], combine func(A, B) C) Iterable[C] {
+	return func() Iterator[C] {
+		return func(yield func(C) bool) bool {
+			aMain, aStop, aPanic := ToChan(ai())
+			bMain, bStop, bPanic := ToChan(bi())
+			defer func() {
+				close(aStop)
+				close(bStop)
+			}()
+			for {
+				var a A
+				var aOk bool
+				select {
+				case a, aOk = <-aMain:
+				case p := <-aPanic:
+					panic(p)
+				case p := <-bPanic:
+					panic(p)
+				}
+				var b B
+				var bOk bool
+				select {
+				case b, bOk = <-bMain:
+				case p := <-aPanic:
+					panic(p)
+				case p := <-bPanic:
+					panic(p)
+				}
+
+				if aOk && bOk {
+					if !yield(combine(a, b)) {
+						return false
+					}
+				} else if aOk || bOk {
+					panic("iterables in mergeElements dont have the same size")
+				} else {
+					return true
+				}
+			}
+		}
+	}
+}
+
 // Cross is used to cross two iterables.
 func Cross[A, B, C any](a Iterable[A], b Iterable[B], cross func(A, B) C) Iterable[C] {
 	return func() Iterator[C] {
