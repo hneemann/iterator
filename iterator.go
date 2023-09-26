@@ -203,7 +203,7 @@ type container[V any] struct {
 	val V
 }
 
-func splitWork[I, O any](jobs <-chan container[I], closed <-chan struct{}, panicChan chan<- any, mapFunc func(n int, i I) O) <-chan container[O] {
+func splitWork[I, O any](jobs <-chan container[I], closed <-chan struct{}, panicChan chan<- any, mapFuncFac func() func(n int, i I) O) <-chan container[O] {
 	result := make(chan container[O])
 	wg := sync.WaitGroup{}
 	for n := 0; n < runtime.NumCPU(); n++ {
@@ -217,6 +217,7 @@ func splitWork[I, O any](jobs <-chan container[I], closed <-chan struct{}, panic
 				wg.Done()
 			}()
 
+			mapFunc := mapFuncFac()
 			for ci := range jobs {
 				o := mapFunc(ci.num, ci.val)
 				select {
@@ -283,7 +284,7 @@ func collectResults[O any](result <-chan container[O], closed chan<- struct{}, p
 
 // MapParallel behaves the same as the Map Iterable.
 // The mapping is distributed over all available cores.
-func MapParallel[I, O any](in Iterable[I], mapFunc func(int, I) O) Iterable[O] {
+func MapParallel[I, O any](in Iterable[I], mapFuncFac func() func(int, I) O) Iterable[O] {
 	return func() Iterator[O] {
 		iter := in()
 		return func(yield func(O) bool) bool {
@@ -291,7 +292,7 @@ func MapParallel[I, O any](in Iterable[I], mapFunc func(int, I) O) Iterable[O] {
 				return container[I]{n, item}
 			}, 0))
 
-			result := splitWork(jobs, closed, panicChan, mapFunc)
+			result := splitWork(jobs, closed, panicChan, mapFuncFac)
 
 			return collectResults(result, closed, panicChan, nil, yield, 0)
 		}
@@ -302,15 +303,15 @@ func MapParallel[I, O any](in Iterable[I], mapFunc func(int, I) O) Iterable[O] {
 // It is measured how long the map function takes. If the map function requires so much
 // computing time that it is worth distributing it over several cores, the map function
 // is distributed over all available cores (reported by runtime.NumCPU()).
-func MapAuto[I, O any](in Iterable[I], mapFunc func(int, I) O) Iterable[O] {
+func MapAuto[I, O any](in Iterable[I], mapFuncFac func() func(int, I) O) Iterable[O] {
 	if runtime.NumCPU() == 1 {
-		return Map(in, mapFunc)
+		return Map(in, mapFuncFac())
 	}
 
 	return func() Iterator[O] {
 		iter := in()
 		return func(yield func(O) bool) bool {
-			next := measure[I, O](yield, mapFunc)
+			next := measure[I, O](yield, mapFuncFac)
 			var cleanUp func()
 			ok := iter(func(item I) bool {
 				next, cleanUp = next(item)
@@ -331,10 +332,11 @@ const (
 	itemsToMeasure             = 11
 )
 
-func measure[I, O any](yield func(O) bool, mapFunc func(int, I) O) nextType[I] {
+func measure[I, O any](yield func(O) bool, mapFuncFac func() func(int, I) O) nextType[I] {
 	var meas nextType[I]
 	var dur time.Duration
 	var count int
+	mapFunc := mapFuncFac()
 	meas = func(v I) (nextType[I], func()) {
 		start := time.Now()
 		o := mapFunc(count, v)
@@ -351,7 +353,7 @@ func measure[I, O any](yield func(O) bool, mapFunc func(int, I) O) nextType[I] {
 		} else {
 			if dur.Microseconds() > itemProcessingTimeMicroSec*int64(count-1) {
 				log.Printf("switched to parallel map: time spend in measured mapFunc calls: %v", dur/(itemsToMeasure-1))
-				return parallel(yield, mapFunc, count)
+				return parallel(yield, mapFuncFac, count)
 			} else {
 				return serial(yield, mapFunc, count)
 			}
@@ -373,7 +375,7 @@ func serial[I, O any](yield func(O) bool, mapFunc func(int, I) O, count int) (ne
 	return ser, nil
 }
 
-func parallel[I, O any](yield func(O) bool, mapFunc func(int, I) O, num int) (nextType[I], func()) {
+func parallel[I, O any](yield func(O) bool, mapFuncFac func() func(int, I) O, num int) (nextType[I], func()) {
 	jobs := make(chan container[I])
 	stop := make(chan struct{})
 	panicChan := make(chan any)
@@ -399,7 +401,7 @@ func parallel[I, O any](yield func(O) bool, mapFunc func(int, I) O, num int) (ne
 		}
 	}
 
-	result := splitWork(jobs, stop, panicChan, mapFunc)
+	result := splitWork(jobs, stop, panicChan, mapFuncFac)
 
 	go func() {
 		defer func() {
@@ -434,15 +436,18 @@ func Filter[V any](in Iterable[V], accept func(V) bool) Iterable[V] {
 // It is measured how long the accept function takes. If the accept function requires so much
 // computing time that it is worth distributing it over several cores, the filtering
 // is distributed over several cores.
-func FilterAuto[V any](in Iterable[V], accept func(V) bool) Iterable[V] {
+func FilterAuto[V any](in Iterable[V], acceptFac func() func(V) bool) Iterable[V] {
 	if runtime.NumCPU() == 1 {
-		return Filter(in, accept)
+		return Filter(in, acceptFac())
 	}
 
 	return func() Iterator[V] {
 		return func(yield func(V) bool) bool {
-			return MapAuto(in, func(i int, val V) filterContainer[V] {
-				return filterContainer[V]{val, accept(val)}
+			return MapAuto(in, func() func(i int, val V) filterContainer[V] {
+				accept := acceptFac()
+				return func(i int, val V) filterContainer[V] {
+					return filterContainer[V]{val, accept(val)}
+				}
 			})()(func(v filterContainer[V]) bool {
 				if v.accept {
 					return yield(v.val)
@@ -461,11 +466,14 @@ type filterContainer[V any] struct {
 
 // FilterParallel behaves the same as the Filter Iterable.
 // The filtering is distributed over all available cores.
-func FilterParallel[V any](in Iterable[V], accept func(V) bool) Iterable[V] {
+func FilterParallel[V any](in Iterable[V], acceptFac func() func(V) bool) Iterable[V] {
 	return func() Iterator[V] {
 		return func(yield func(V) bool) bool {
-			return MapParallel[V, filterContainer[V]](in, func(i int, val V) filterContainer[V] {
-				return filterContainer[V]{val, accept(val)}
+			return MapParallel[V, filterContainer[V]](in, func() func(i int, val V) filterContainer[V] {
+				accept := acceptFac()
+				return func(i int, val V) filterContainer[V] {
+					return filterContainer[V]{val, accept(val)}
+				}
 			})()(func(v filterContainer[V]) bool {
 				if v.accept {
 					return yield(v.val)
