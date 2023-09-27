@@ -237,7 +237,7 @@ func TestBreak(t *testing.T) {
 		{name: "append", it: appended(), count: 3},
 		{name: "generate", it: Generate(10, addOne)(), count: 3},
 		{name: "map", it: Map[int](ints(4), square)(), count: 2},
-		{name: "parallelMap", it: MapParallel[int](ints(40), squareSlow)(), count: 10},
+		{name: "parallelMap", it: MapParallel[int](ints(40), func() func(int, int) int { return squareSlow })(), count: 10},
 		{name: "filter", it: Filter[int](ints(8), isEven)(), count: 2},
 		{name: "chan", it: FromChan(ToChan[int](ints(10)())), count: 2},
 	}
@@ -383,7 +383,7 @@ func TestIterableThinning(t *testing.T) {
 
 func TestParallelMap(t *testing.T) {
 	src := Generate(20, func(n int) int { return n })
-	ints := MapParallel(src, func(i, v int) int { return v * 2 })
+	ints := MapParallel(src, func() func(i, v int) int { return func(i, v int) int { return v * 2 } })
 	expected := ToSlice(Generate(20, func(n int) int { return n * 2 })())
 	assert.EqualValues(t, expected, ToSlice(ints()))
 }
@@ -392,9 +392,11 @@ func TestParallelMapSlow(t *testing.T) {
 	const count = 500
 	const delay = time.Millisecond * 10
 	all := Generate(count, func(n int) int { return n + 1 })
-	ints := MapParallel(all, func(n, v int) mapResult {
-		time.Sleep(delay)
-		return mapResult{res: v * 2, number: n}
+	ints := MapParallel(all, func() func(n, v int) mapResult {
+		return func(n, v int) mapResult {
+			time.Sleep(delay)
+			return mapResult{res: v * 2, number: n}
+		}
 	})
 	expected := ToSlice(Generate(count, func(n int) mapResult {
 		return mapResult{res: (n + 1) * 2, number: n}
@@ -418,9 +420,11 @@ func TestParallelMapSlow(t *testing.T) {
 
 func TestParallelFilter(t *testing.T) {
 	ints := Slice([]int{1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11})
-	ints = FilterParallel[int](ints, func(v int) bool {
-		time.Sleep(time.Millisecond * 10)
-		return v%2 == 0
+	ints = FilterParallel[int](ints, func() func(v int) bool {
+		return func(v int) bool {
+			time.Sleep(time.Millisecond * 10)
+			return v%2 == 0
+		}
 	})
 
 	check[int](t, ints, 2, 4, 6, 8, 10)
@@ -428,11 +432,13 @@ func TestParallelFilter(t *testing.T) {
 
 func TestParallelMapPanic1(t *testing.T) {
 	src := Generate[int](20, func(n int) int { return n })
-	ints := MapParallel[int, int](src, func(i, v int) int {
-		if v == 7 {
-			panic("test")
+	ints := MapParallel[int, int](src, func() func(i, v int) int {
+		return func(i, v int) int {
+			if v == 7 {
+				panic("test")
+			}
+			return v * 2
 		}
-		return v * 2
 	})
 
 	var p any
@@ -454,7 +460,11 @@ func TestParallelMapPanic2(t *testing.T) {
 		}
 		return n
 	})
-	ints := MapParallel[int, int](src, func(i, v int) int { return v * 2 })
+	ints := MapParallel[int, int](src, func() func(i, v int) int {
+		return func(i, v int) int {
+			return v * 2
+		}
+	})
 
 	var p any
 	func() {
@@ -477,9 +487,11 @@ func TestAutoMap(t *testing.T) {
 	const count = itemsToMeasure * 50
 	const delay = time.Millisecond * 10
 	all := Generate[int](count, func(n int) int { return n + 1 })
-	ints := MapAuto[int, mapResult](all, func(n, v int) mapResult {
-		time.Sleep(delay)
-		return mapResult{res: v * 2, number: n}
+	ints := MapAuto[int, mapResult](all, func() func(n, v int) mapResult {
+		return func(n, v int) mapResult {
+			time.Sleep(delay)
+			return mapResult{res: v * 2, number: n}
+		}
 	})
 	expected := ToSlice(Generate[mapResult](count, func(n int) mapResult {
 		return mapResult{res: (n + 1) * 2, number: n}
@@ -499,8 +511,10 @@ func TestAutoMap(t *testing.T) {
 	fmt.Println("measured:", measuredTime)
 	assert.True(t, measuredTime < (expectedTime+worstTime)/2, "to slow")
 
-	ints = MapAuto[int, mapResult](all, func(n, v int) mapResult {
-		return mapResult{res: v * 2, number: n}
+	ints = MapAuto[int, mapResult](all, func() func(n, v int) mapResult {
+		return func(n, v int) mapResult {
+			return mapResult{res: v * 2, number: n}
+		}
 	})
 	assert.EqualValues(t, expected, ToSlice(ints()))
 }
@@ -508,8 +522,10 @@ func TestAutoMap(t *testing.T) {
 func TestAutoMapShort(t *testing.T) {
 	count := itemsToMeasure
 	all := Generate[int](count, func(n int) int { return n + 1 })
-	ints := MapAuto[int, int](all, func(n, v int) int {
-		return v * 2
+	ints := MapAuto[int, int](all, func() func(n, v int) int {
+		return func(n, v int) int {
+			return v * 2
+		}
 	})
 	expected := ToSlice(Generate[int](count, func(n int) int { return (n + 1) * 2 })())
 	assert.EqualValues(t, expected, ToSlice(ints()))
@@ -523,7 +539,11 @@ func TestAutoMapPanicEarly1(t *testing.T) {
 		}
 		return n
 	})
-	ints := MapAuto[int, int](src, func(i, v int) int { return v * 2 })
+	ints := MapAuto[int, int](src, func() func(i, v int) int {
+		return func(i, v int) int {
+			return v * 2
+		}
+	})
 
 	var p any
 	func() {
@@ -539,11 +559,13 @@ func TestAutoMapPanicEarly1(t *testing.T) {
 
 func TestAutoMapPanicEarly2(t *testing.T) {
 	src := Generate[int](20, func(n int) int { return n })
-	ints := MapAuto[int, int](src, func(i, v int) int {
-		if i == 4 {
-			panic("test")
+	ints := MapAuto[int, int](src, func() func(i, v int) int {
+		return func(i, v int) int {
+			if i == 4 {
+				panic("test")
+			}
+			return v * 2
 		}
-		return v * 2
 	})
 
 	var p any
@@ -562,9 +584,11 @@ func TestAutoFilter(t *testing.T) {
 	const count = itemsToMeasure * 50
 	const delay = time.Millisecond * 10
 	all := Generate[int](count, func(n int) int { return n + 1 })
-	ints := FilterAuto[int](all, func(v int) bool {
-		time.Sleep(delay)
-		return v%2 == 0
+	ints := FilterAuto[int](all, func() func(v int) bool {
+		return func(v int) bool {
+			time.Sleep(delay)
+			return v%2 == 0
+		}
 	})
 	expected := ToSlice(Generate[int](count/2, func(n int) int { return (n + 1) * 2 })())
 
@@ -590,8 +614,10 @@ func TestAutoFilter(t *testing.T) {
 func TestAutoFilterSerial(t *testing.T) {
 	count := itemsToMeasure * 2
 	all := Generate(count, func(n int) int { return n + 1 })
-	ints := FilterAuto(all, func(v int) bool {
-		return v%2 == 0
+	ints := FilterAuto(all, func() func(v int) bool {
+		return func(v int) bool {
+			return v%2 == 0
+		}
 	})
 	expected := ToSlice(Generate(count/2, func(n int) int { return (n + 1) * 2 })())
 
@@ -602,9 +628,11 @@ func TestAutoFilterSerial(t *testing.T) {
 func TestAutoFilterShort(t *testing.T) {
 	count := itemsToMeasure
 	all := Generate(count, func(n int) int { return n + 1 })
-	ints := FilterAuto(all, func(v int) bool {
-		time.Sleep(time.Microsecond * itemProcessingTimeMicroSec * 2)
-		return v%2 == 0
+	ints := FilterAuto(all, func() func(v int) bool {
+		return func(v int) bool {
+			time.Sleep(time.Microsecond * itemProcessingTimeMicroSec * 2)
+			return v%2 == 0
+		}
 	})
 	expected := ToSlice(Generate(count/2, func(n int) int { return (n + 1) * 2 })())
 
@@ -671,14 +699,18 @@ func BenchmarkMap(b *testing.B) {
 func BenchmarkMapAuto(b *testing.B) {
 	ints := Generate(10000, func(i int) int { return i })
 	for i := 0; i < b.N; i++ {
-		Reduce(MapAuto(ints, square), add)
+		Reduce(MapAuto(ints, func() func(int, int) int {
+			return square
+		}), add)
 	}
 }
 
 func BenchmarkMapParallel(b *testing.B) {
 	ints := Generate(10000, func(i int) int { return i })
 	for i := 0; i < b.N; i++ {
-		Reduce(MapParallel(ints, square), add)
+		Reduce(MapParallel(ints, func() func(int, int) int {
+			return square
+		}), add)
 	}
 }
 
@@ -692,13 +724,17 @@ func BenchmarkSMap(b *testing.B) {
 func BenchmarkSMapAuto(b *testing.B) {
 	ints := Generate(100, func(i int) int { return i })
 	for i := 0; i < b.N; i++ {
-		Reduce(MapAuto(ints, squareSlow), add)
+		Reduce(MapAuto(ints, func() func(int, int) int {
+			return squareSlow
+		}), add)
 	}
 }
 
 func BenchmarkSMapParallel(b *testing.B) {
 	ints := Generate(100, func(i int) int { return i })
 	for i := 0; i < b.N; i++ {
-		Reduce(MapParallel(ints, squareSlow), add)
+		Reduce(MapParallel(ints, func() func(int, int) int {
+			return squareSlow
+		}), add)
 	}
 }
