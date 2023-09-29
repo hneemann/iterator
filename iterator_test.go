@@ -157,10 +157,10 @@ func TestReduce(t *testing.T) {
 }
 
 func TestReduceParallel(t *testing.T) {
-	reduce, ok := ReduceParallel(ints(11), addSlow)
+	reduce, ok := ReduceParallel(ints(11), func() func(int, int) int { return addSlow })
 	assert.True(t, ok)
 	assert.Equal(t, 55, reduce)
-	reduce, ok = ReduceParallel(Empty[int](), addSlow)
+	reduce, ok = ReduceParallel(Empty[int](), func() func(int, int) int { return addSlow })
 	assert.False(t, ok)
 	assert.Equal(t, 0, reduce)
 }
@@ -178,7 +178,7 @@ func TestReduceParallelPanic1(t *testing.T) {
 		defer func() {
 			p = recover()
 		}()
-		ReduceParallel(list, addSlow)
+		ReduceParallel(list, func() func(int, int) int { return addSlow })
 	}()
 	assert.Equal(t, "test", p)
 }
@@ -190,12 +190,14 @@ func TestReduceParallelPanic2(t *testing.T) {
 			p = recover()
 		}()
 		fire := runtime.NumCPU() * 2
-		ReduceParallel(ints(10000), func(a int, b int) int {
-			time.Sleep(time.Millisecond * 30)
-			if b == fire {
-				panic("test")
+		ReduceParallel(ints(10000), func() func(a int, b int) int {
+			return func(a int, b int) int {
+				time.Sleep(time.Millisecond * 30)
+				if b == fire {
+					panic("test")
+				}
+				return a + b
 			}
-			return a + b
 		})
 	}()
 	assert.Equal(t, "test", p)

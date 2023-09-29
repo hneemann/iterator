@@ -208,6 +208,7 @@ func splitWork[I, O any](jobs <-chan container[I], closed <-chan struct{}, panic
 	wg := sync.WaitGroup{}
 	for n := 0; n < runtime.NumCPU(); n++ {
 		wg.Add(1)
+		mapFunc := mapFuncFac()
 		go func() {
 			defer func() {
 				rec := recover()
@@ -217,7 +218,6 @@ func splitWork[I, O any](jobs <-chan container[I], closed <-chan struct{}, panic
 				wg.Done()
 			}()
 
-			mapFunc := mapFuncFac()
 			for ci := range jobs {
 				o := mapFunc(ci.num, ci.val)
 				select {
@@ -878,13 +878,14 @@ func Reduce[V any](it Iterable[V], reduceFunc func(V, V) V) (V, bool) {
 // because the synchronization is more expensive than the operation itself.
 // It should always be possible to do the heavy lifting in a map operation and
 // make the reduce operation low cost.
-func ReduceParallel[V any](it Iterable[V], reduceFunc func(V, V) V) (V, bool) {
+func ReduceParallel[V any](it Iterable[V], reduceFuncFac func() func(V, V) V) (V, bool) {
 	valChan, stop, wasPanic := ToChan(it())
 
 	result := make(chan V)
 	var wg sync.WaitGroup
 	for i := 0; i < runtime.NumCPU(); i++ {
 		wg.Add(1)
+		reduceFunc := reduceFuncFac()
 		go func() {
 			defer func() {
 				rec := recover()
@@ -914,6 +915,7 @@ func ReduceParallel[V any](it Iterable[V], reduceFunc func(V, V) V) (V, bool) {
 	}()
 	var sum V
 	isSum := false
+	reduceFunc := reduceFuncFac()
 	for {
 		select {
 		case r, ok := <-result:
