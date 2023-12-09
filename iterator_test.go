@@ -452,7 +452,7 @@ func TestParallelMapPanic1(t *testing.T) {
 		}
 	})
 
-	_, err := ints(func(i int) bool {
+	err := ints(func(i int) bool {
 		return true
 	})
 	assert.Error(t, err)
@@ -472,7 +472,7 @@ func TestParallelMapPanic2(t *testing.T) {
 		}
 	})
 
-	_, err := ints(func(i int) bool {
+	err := ints(func(i int) bool {
 		return true
 	})
 	assert.Error(t, err)
@@ -550,7 +550,7 @@ func TestAutoMapPanicEarly1(t *testing.T) {
 		}
 	})
 
-	_, err := ints(func(i int) bool {
+	err := ints(func(i int) bool {
 		return true
 	})
 	assert.Error(t, err)
@@ -568,7 +568,7 @@ func TestAutoMapPanicEarly2(t *testing.T) {
 		}
 	})
 
-	_, err := ints(func(i int) bool {
+	err := ints(func(i int) bool {
 		return true
 	})
 	assert.Error(t, err)
