@@ -9,68 +9,56 @@ import (
 	"time"
 )
 
-type Iterator[V any] func(func(V) bool) (bool, error)
-
-type Iterable[V any] func() Iterator[V]
+type Iterable[V any] func(func(V) bool) (bool, error)
 
 func Empty[V any]() Iterable[V] {
-	return func() Iterator[V] {
-		return func(yield func(V) bool) (bool, error) {
-			return true, nil
-		}
+	return func(yield func(V) bool) (bool, error) {
+		return true, nil
 	}
 }
 
 func Single[V any](v V) Iterable[V] {
-	return func() Iterator[V] {
-		return func(yield func(V) bool) (bool, error) {
-			return yield(v), nil
-		}
+	return func(yield func(V) bool) (bool, error) {
+		return yield(v), nil
 	}
 }
 
 // Slice create an Iterable from a slice
 func Slice[V any](items []V) Iterable[V] {
-	return func() Iterator[V] {
-		return func(yield func(V) bool) (bool, error) {
-			for _, i := range items {
-				if !yield(i) {
-					return false, nil
-				}
+	return func(yield func(V) bool) (bool, error) {
+		for _, i := range items {
+			if !yield(i) {
+				return false, nil
 			}
-			return true, nil
 		}
+		return true, nil
 	}
 }
 
 // Append appends to Iterables
 func Append[V any](iterables ...Iterable[V]) Iterable[V] {
-	return func() Iterator[V] {
-		return func(yield func(V) bool) (bool, error) {
-			for _, it := range iterables {
-				if ok, err := it()(yield); !ok || err != nil {
-					return false, err
-				}
+	return func(yield func(V) bool) (bool, error) {
+		for _, it := range iterables {
+			if ok, err := it(yield); !ok || err != nil {
+				return false, err
 			}
-			return true, nil
 		}
+		return true, nil
 	}
 }
 
 func Generate[V any](n int, gen func(i int) (V, error)) Iterable[V] {
-	return func() Iterator[V] {
-		return func(yield func(V) bool) (bool, error) {
-			for i := 0; i < n; i++ {
-				v, err := gen(i)
-				if err != nil {
-					return false, err
-				}
-				if !yield(v) {
-					return false, nil
-				}
+	return func(yield func(V) bool) (bool, error) {
+		for i := 0; i < n; i++ {
+			v, err := gen(i)
+			if err != nil {
+				return false, err
 			}
-			return true, nil
+			if !yield(v) {
+				return false, nil
+			}
 		}
+		return true, nil
 	}
 }
 
@@ -83,7 +71,7 @@ func toError(rec any) error {
 }
 
 // ToChan writes elements to a channel
-func ToChan[V any](it Iterator[V]) (<-chan V, chan struct{}, chan error) {
+func ToChan[V any](it Iterable[V]) (<-chan V, chan struct{}, chan error) {
 	c := make(chan V)
 	stop := make(chan struct{})
 	panicChan := make(chan error)
@@ -113,7 +101,7 @@ func ToChan[V any](it Iterator[V]) (<-chan V, chan struct{}, chan error) {
 }
 
 // FromChan reads items from a channel
-func FromChan[V any](c <-chan V, stop chan<- struct{}, panicReadeAndFire <-chan error) Iterator[V] {
+func FromChan[V any](c <-chan V, stop chan<- struct{}, panicReadeAndFire <-chan error) Iterable[V] {
 	return func(yield func(V) bool) (bool, error) {
 		defer close(stop)
 		for {
@@ -134,7 +122,7 @@ func FromChan[V any](c <-chan V, stop chan<- struct{}, panicReadeAndFire <-chan 
 }
 
 // ToSlice reads all items from the Iterator and stores them in a slice.
-func ToSlice[V any](it Iterator[V]) ([]V, error) {
+func ToSlice[V any](it Iterable[V]) ([]V, error) {
 	var sl []V
 	_, err := it(func(v V) bool {
 		sl = append(sl, v)
@@ -144,7 +132,7 @@ func ToSlice[V any](it Iterator[V]) ([]V, error) {
 }
 
 // Equals checks if the two Iterators are equal.
-func Equals[V any](i1, i2 Iterator[V], equals func(V, V) (bool, error)) (bool, error) {
+func Equals[V any](i1, i2 Iterable[V], equals func(V, V) (bool, error)) (bool, error) {
 	cMain1, stop1, p1 := ToChan(i1)
 	cMain2, stop2, p2 := ToChan(i2)
 	defer func() {
@@ -206,12 +194,10 @@ func Equals[V any](i1, i2 Iterator[V], equals func(V, V) (bool, error)) (bool, e
 
 // Map maps the elements to new element created by the given mapFunc function
 func Map[I, O any](in Iterable[I], mapFunc func(int, I) (O, error)) Iterable[O] {
-	return func() Iterator[O] {
-		return mapIterator[I, O](in(), mapFunc, 0)
-	}
+	return mapIterator[I, O](in, mapFunc, 0)
 }
 
-func mapIterator[I, O any](iter Iterator[I], mapFunc func(int, I) (O, error), num int) Iterator[O] {
+func mapIterator[I, O any](iter Iterable[I], mapFunc func(int, I) (O, error), num int) Iterable[O] {
 	return func(yield func(O) bool) (bool, error) {
 		var innerErr error
 		ok, err := iter(func(item I) bool {
@@ -320,18 +306,15 @@ func collectResults[O any](result <-chan container[O], closed chan<- struct{}, p
 
 // MapParallel behaves the same as the Map Iterable.
 // The mapping is distributed over all available cores.
-func MapParallel[I, O any](in Iterable[I], mapFuncFac func() func(int, I) (O, error)) Iterable[O] {
-	return func() Iterator[O] {
-		iter := in()
-		return func(yield func(O) bool) (bool, error) {
-			jobs, closed, panicChan := ToChan(mapIterator(iter, func(n int, item I) (container[I], error) {
-				return container[I]{num: n, val: item}, nil
-			}, 0))
+func MapParallel[I, O any](iter Iterable[I], mapFuncFac func() func(int, I) (O, error)) Iterable[O] {
+	return func(yield func(O) bool) (bool, error) {
+		jobs, closed, panicChan := ToChan(mapIterator(iter, func(n int, item I) (container[I], error) {
+			return container[I]{num: n, val: item}, nil
+		}, 0))
 
-			result := splitWork(jobs, closed, panicChan, mapFuncFac)
+		result := splitWork(jobs, closed, panicChan, mapFuncFac)
 
-			return collectResults(result, closed, panicChan, nil, yield, 0)
-		}
+		return collectResults(result, closed, panicChan, nil, yield, 0)
 	}
 }
 
@@ -339,29 +322,26 @@ func MapParallel[I, O any](in Iterable[I], mapFuncFac func() func(int, I) (O, er
 // It is measured how long the map function takes. If the map function requires so much
 // computing time that it is worth distributing it over several cores, the map function
 // is distributed over all available cores (reported by runtime.NumCPU()).
-func MapAuto[I, O any](in Iterable[I], mapFuncFac func() func(int, I) (O, error)) Iterable[O] {
+func MapAuto[I, O any](iter Iterable[I], mapFuncFac func() func(int, I) (O, error)) Iterable[O] {
 	if runtime.NumCPU() == 1 {
-		return Map(in, mapFuncFac())
+		return Map(iter, mapFuncFac())
 	}
 
-	return func() Iterator[O] {
-		iter := in()
-		return func(yield func(O) bool) (bool, error) {
-			next := measure[I, O](yield, mapFuncFac)
-			var innerErr error
-			var cleanUp func()
-			ok, err := iter(func(item I) bool {
-				next, cleanUp, innerErr = next(item)
-				return next != nil && innerErr == nil
-			})
-			if cleanUp != nil {
-				cleanUp()
-			}
-			if innerErr != nil {
-				return false, innerErr
-			}
-			return ok, err
+	return func(yield func(O) bool) (bool, error) {
+		next := measure[I, O](yield, mapFuncFac)
+		var innerErr error
+		var cleanUp func()
+		ok, err := iter(func(item I) bool {
+			next, cleanUp, innerErr = next(item)
+			return next != nil && innerErr == nil
+		})
+		if cleanUp != nil {
+			cleanUp()
 		}
+		if innerErr != nil {
+			return false, innerErr
+		}
+		return ok, err
 	}
 }
 
@@ -467,28 +447,26 @@ func parallel[I, O any](yield func(O) bool, mapFuncFac func() func(int, I) (O, e
 }
 
 // Filter filters the given Iterable by the given accept function
-func Filter[V any](in Iterable[V], accept func(V) (bool, error)) Iterable[V] {
-	return func() Iterator[V] {
-		return func(yield func(V) bool) (bool, error) {
-			var innerErr error
-			ok, err := in()(func(v V) bool {
-				b, err := accept(v)
-				if err != nil {
-					innerErr = err
+func Filter[V any](iter Iterable[V], accept func(V) (bool, error)) Iterable[V] {
+	return func(yield func(V) bool) (bool, error) {
+		var innerErr error
+		ok, err := iter(func(v V) bool {
+			b, err := accept(v)
+			if err != nil {
+				innerErr = err
+				return false
+			}
+			if b {
+				if !yield(v) {
 					return false
 				}
-				if b {
-					if !yield(v) {
-						return false
-					}
-				}
-				return true
-			})
-			if innerErr != nil {
-				return false, innerErr
 			}
-			return ok, err
+			return true
+		})
+		if innerErr != nil {
+			return false, innerErr
 		}
+		return ok, err
 	}
 }
 
@@ -501,25 +479,23 @@ func FilterAuto[V any](in Iterable[V], acceptFac func() func(V) (bool, error)) I
 		return Filter(in, acceptFac())
 	}
 
-	return func() Iterator[V] {
-		return func(yield func(V) bool) (bool, error) {
-			return MapAuto(in, func() func(i int, val V) (filterContainer[V], error) {
-				accept := acceptFac()
-				return func(i int, val V) (filterContainer[V], error) {
-					b, err := accept(val)
-					if err != nil {
-						return filterContainer[V]{}, err
-					}
-					return filterContainer[V]{val, b}, nil
+	return func(yield func(V) bool) (bool, error) {
+		return MapAuto(in, func() func(i int, val V) (filterContainer[V], error) {
+			accept := acceptFac()
+			return func(i int, val V) (filterContainer[V], error) {
+				b, err := accept(val)
+				if err != nil {
+					return filterContainer[V]{}, err
 				}
-			})()(func(v filterContainer[V]) bool {
-				if v.accept {
-					return yield(v.val)
-				} else {
-					return true
-				}
-			})
-		}
+				return filterContainer[V]{val, b}, nil
+			}
+		})(func(v filterContainer[V]) bool {
+			if v.accept {
+				return yield(v.val)
+			} else {
+				return true
+			}
+		})
 	}
 }
 
@@ -531,203 +507,191 @@ type filterContainer[V any] struct {
 // FilterParallel behaves the same as the Filter Iterable.
 // The filtering is distributed over all available cores.
 func FilterParallel[V any](in Iterable[V], acceptFac func() func(V) (bool, error)) Iterable[V] {
-	return func() Iterator[V] {
-		return func(yield func(V) bool) (bool, error) {
-			return MapParallel[V, filterContainer[V]](in, func() func(i int, val V) (filterContainer[V], error) {
-				accept := acceptFac()
-				return func(i int, val V) (filterContainer[V], error) {
-					b, err := accept(val)
-					if err != nil {
-						return filterContainer[V]{}, err
-					}
-					return filterContainer[V]{val, b}, nil
+	return func(yield func(V) bool) (bool, error) {
+		return MapParallel[V, filterContainer[V]](in, func() func(i int, val V) (filterContainer[V], error) {
+			accept := acceptFac()
+			return func(i int, val V) (filterContainer[V], error) {
+				b, err := accept(val)
+				if err != nil {
+					return filterContainer[V]{}, err
 				}
-			})()(func(v filterContainer[V]) bool {
-				if v.accept {
-					return yield(v.val)
-				} else {
-					return true
-				}
-			})
-		}
+				return filterContainer[V]{val, b}, nil
+			}
+		})(func(v filterContainer[V]) bool {
+			if v.accept {
+				return yield(v.val)
+			} else {
+				return true
+			}
+		})
 	}
 }
 
 // Compact returns an iterable which contains no consecutive duplicates.
-func Compact[V any](items Iterable[V], equal func(V, V) (bool, error)) Iterable[V] {
-	return func() Iterator[V] {
-		return func(yield func(V) bool) (bool, error) {
-			isLast := false
-			var last V
-			var innerErr error
-			ok, err := items()(func(v V) bool {
-				if isLast {
-					eq, err := equal(last, v)
-					if err != nil {
-						innerErr = err
-						return false
-					}
-					if !eq {
-						if !yield(v) {
-							return false
-						}
-					}
-				} else {
-					isLast = true
+func Compact[V any](iter Iterable[V], equal func(V, V) (bool, error)) Iterable[V] {
+	return func(yield func(V) bool) (bool, error) {
+		isLast := false
+		var last V
+		var innerErr error
+		ok, err := iter(func(v V) bool {
+			if isLast {
+				eq, err := equal(last, v)
+				if err != nil {
+					innerErr = err
+					return false
+				}
+				if !eq {
 					if !yield(v) {
 						return false
 					}
 				}
-				last = v
-				return true
-			})
-			if innerErr != nil {
-				return false, innerErr
+			} else {
+				isLast = true
+				if !yield(v) {
+					return false
+				}
 			}
-			return ok, err
+			last = v
+			return true
+		})
+		if innerErr != nil {
+			return false, innerErr
 		}
+		return ok, err
 	}
 }
 
 // Group returns an iterable which contains iterables of equal values
-func Group[V any](items Iterable[V], equal func(V, V) (bool, error)) Iterable[Iterable[V]] {
-	return func() Iterator[Iterable[V]] {
-		return func(yield func(Iterable[V]) bool) (bool, error) {
-			var list []V
-			var innerErr error
-			ok, err := items()(func(v V) bool {
-				if len(list) > 0 {
-					eq, err := equal(list[len(list)-1], v)
-					if err != nil {
-						innerErr = err
+func Group[V any](iter Iterable[V], equal func(V, V) (bool, error)) Iterable[Iterable[V]] {
+	return func(yield func(Iterable[V]) bool) (bool, error) {
+		var list []V
+		var innerErr error
+		ok, err := iter(func(v V) bool {
+			if len(list) > 0 {
+				eq, err := equal(list[len(list)-1], v)
+				if err != nil {
+					innerErr = err
+					return false
+				}
+				if eq {
+					list = append(list, v)
+				} else {
+					if !yield(Slice(list)) {
 						return false
 					}
-					if eq {
-						list = append(list, v)
-					} else {
-						if !yield(Slice(list)) {
-							return false
-						}
-						list = []V{v}
-					}
-				} else {
 					list = []V{v}
 				}
-				return true
-			})
-			if innerErr != nil {
-				return false, innerErr
+			} else {
+				list = []V{v}
 			}
-			if ok && len(list) > 0 {
-				return yield(Slice(list)), nil
-			}
-			return ok, err
+			return true
+		})
+		if innerErr != nil {
+			return false, innerErr
 		}
+		if ok && len(list) > 0 {
+			return yield(Slice(list)), nil
+		}
+		return ok, err
 	}
 }
 
 // Combine maps two consecutive elements to a new element.
 // The generated iterable has one element less than the original iterable.
 func Combine[I, O any](in Iterable[I], combine func(I, I) (O, error)) Iterable[O] {
-	return func() Iterator[O] {
-		return func(yield func(O) bool) (bool, error) {
-			isValue := false
-			var innerErr error
-			var last I
-			ok, err := in()(func(i I) bool {
-				if isValue {
-					o, err := combine(last, i)
-					if err != nil {
-						innerErr = err
-						return false
-					}
-					if !yield(o) {
-						return false
-					}
-				} else {
-					isValue = true
+	return func(yield func(O) bool) (bool, error) {
+		isValue := false
+		var innerErr error
+		var last I
+		ok, err := in(func(i I) bool {
+			if isValue {
+				o, err := combine(last, i)
+				if err != nil {
+					innerErr = err
+					return false
 				}
-				last = i
-				return true
-			})
-			if innerErr != nil {
-				return false, innerErr
+				if !yield(o) {
+					return false
+				}
+			} else {
+				isValue = true
 			}
-			return ok, err
+			last = i
+			return true
+		})
+		if innerErr != nil {
+			return false, innerErr
 		}
+		return ok, err
 	}
 }
 
 // Combine3 maps three consecutive elements to a new element.
 // The generated iterable has two elements less than the original iterable.
-func Combine3[I, O any](in Iterable[I], combine func(I, I, I) (O, error)) Iterable[O] {
-	return func() Iterator[O] {
-		return func(yield func(O) bool) (bool, error) {
-			valuesPresent := 0
-			var lastLast, last I
-			var innerErr error
-			ok, err := in()(func(i I) bool {
-				switch valuesPresent {
-				case 0:
-					valuesPresent = 1
-					lastLast = i
-					return true
-				case 1:
-					valuesPresent = 2
-					last = i
-					return true
-				default:
-					o, err := combine(lastLast, last, i)
-					if err != nil {
-						innerErr = err
-						return false
-					}
-					lastLast = last
-					last = i
-					return yield(o)
+func Combine3[I, O any](iter Iterable[I], combine func(I, I, I) (O, error)) Iterable[O] {
+	return func(yield func(O) bool) (bool, error) {
+		valuesPresent := 0
+		var lastLast, last I
+		var innerErr error
+		ok, err := iter(func(i I) bool {
+			switch valuesPresent {
+			case 0:
+				valuesPresent = 1
+				lastLast = i
+				return true
+			case 1:
+				valuesPresent = 2
+				last = i
+				return true
+			default:
+				o, err := combine(lastLast, last, i)
+				if err != nil {
+					innerErr = err
+					return false
 				}
-			})
-			if innerErr != nil {
-				return false, innerErr
+				lastLast = last
+				last = i
+				return yield(o)
 			}
-			return ok, err
+		})
+		if innerErr != nil {
+			return false, innerErr
 		}
+		return ok, err
 	}
 }
 
 // CombineN maps N consecutive elements to a new element.
 // The generated iterable has (N-1) elements less than the original iterable.
-func CombineN[I, O any](in Iterable[I], n int, combine func(i0 int, v []I) (O, error)) Iterable[O] {
-	return func() Iterator[O] {
-		return func(yield func(O) bool) (bool, error) {
-			valuesPresent := 0
-			pos := 0
-			vals := make([]I, n, n)
-			var innerErr error
-			ok, err := in()(func(i I) bool {
-				vals[pos] = i
-				pos++
-				if pos == n {
-					pos = 0
-				}
-				if valuesPresent < n {
-					valuesPresent++
-				}
-				if valuesPresent == n {
-					o, err := combine(pos, vals)
-					if err != nil {
-						innerErr = err
-						return false
-					}
-					return yield(o)
-				}
-				return true
-			})
-			if innerErr != nil {
-				return false, innerErr
+func CombineN[I, O any](iter Iterable[I], n int, combine func(i0 int, v []I) (O, error)) Iterable[O] {
+	return func(yield func(O) bool) (bool, error) {
+		valuesPresent := 0
+		pos := 0
+		vals := make([]I, n, n)
+		var innerErr error
+		ok, err := iter(func(i I) bool {
+			vals[pos] = i
+			pos++
+			if pos == n {
+				pos = 0
 			}
-			return ok, err
+			if valuesPresent < n {
+				valuesPresent++
+			}
+			if valuesPresent == n {
+				o, err := combine(pos, vals)
+				if err != nil {
+					innerErr = err
+					return false
+				}
+				return yield(o)
+			}
+			return true
+		})
+		if innerErr != nil {
+			return false, innerErr
 		}
+		return ok, err
 	}
 }
 
@@ -735,95 +699,93 @@ func CombineN[I, O any](in Iterable[I], n int, combine func(i0 int, v []I) (O, e
 // The less function determines which element to take first
 // Makes sens only if the provided iterables are ordered.
 func Merge[V any](ai, bi Iterable[V], less func(V, V) (bool, error)) Iterable[V] {
-	return func() Iterator[V] {
-		return func(yield func(V) bool) (bool, error) {
-			aMain, aStop, aPanic := ToChan(ai())
-			bMain, bStop, bPanic := ToChan(bi())
-			defer func() {
-				close(aStop)
-				close(bStop)
-			}()
-			ar := aMain
-			br := bMain
-			var remainder <-chan V
-			var a V
-			var b V
-			var ok bool
-			for {
-				select {
-				case a, ok = <-ar:
-					ar = nil
-					if ok {
-						if br == nil {
-							le, err := less(a, b)
-							if err != nil {
-								return false, err
-							}
-							if le {
-								if !yield(a) {
-									return false, nil
-								}
-								ar = aMain
-							} else {
-								if !yield(b) {
-									return false, nil
-								}
-								br = bMain
-							}
+	return func(yield func(V) bool) (bool, error) {
+		aMain, aStop, aPanic := ToChan(ai)
+		bMain, bStop, bPanic := ToChan(bi)
+		defer func() {
+			close(aStop)
+			close(bStop)
+		}()
+		ar := aMain
+		br := bMain
+		var remainder <-chan V
+		var a V
+		var b V
+		var ok bool
+		for {
+			select {
+			case a, ok = <-ar:
+				ar = nil
+				if ok {
+					if br == nil {
+						le, err := less(a, b)
+						if err != nil {
+							return false, err
 						}
-					} else {
-						if br == nil {
-							if !yield(b) {
-								return false, nil
-							}
-						} else {
-							br = nil
-						}
-						remainder = bMain
-					}
-				case b, ok = <-br:
-					br = nil
-					if ok {
-						if ar == nil {
-							le, err := less(a, b)
-							if err != nil {
-								return false, err
-							}
-							if le {
-								if !yield(a) {
-									return false, nil
-								}
-								ar = aMain
-							} else {
-								if !yield(b) {
-									return false, nil
-								}
-								br = bMain
-							}
-						}
-					} else {
-						if ar == nil {
+						if le {
 							if !yield(a) {
 								return false, nil
 							}
+							ar = aMain
 						} else {
-							ar = nil
+							if !yield(b) {
+								return false, nil
+							}
+							br = bMain
 						}
-						remainder = aMain
 					}
-				case r, ok := <-remainder:
-					if ok {
-						if !yield(r) {
+				} else {
+					if br == nil {
+						if !yield(b) {
 							return false, nil
 						}
 					} else {
-						return true, nil
+						br = nil
 					}
-				case p := <-aPanic:
-					return false, p
-				case p := <-bPanic:
-					return false, p
+					remainder = bMain
 				}
+			case b, ok = <-br:
+				br = nil
+				if ok {
+					if ar == nil {
+						le, err := less(a, b)
+						if err != nil {
+							return false, err
+						}
+						if le {
+							if !yield(a) {
+								return false, nil
+							}
+							ar = aMain
+						} else {
+							if !yield(b) {
+								return false, nil
+							}
+							br = bMain
+						}
+					}
+				} else {
+					if ar == nil {
+						if !yield(a) {
+							return false, nil
+						}
+					} else {
+						ar = nil
+					}
+					remainder = aMain
+				}
+			case r, ok := <-remainder:
+				if ok {
+					if !yield(r) {
+						return false, nil
+					}
+				} else {
+					return true, nil
+				}
+			case p := <-aPanic:
+				return false, p
+			case p := <-bPanic:
+				return false, p
 			}
 		}
 	}
@@ -833,47 +795,45 @@ func Merge[V any](ai, bi Iterable[V], less func(V, V) (bool, error)) Iterable[V]
 // The combine function creates the result of combining the two elements.
 // The iterables must have the same size.
 func MergeElements[A, B, C any](ai Iterable[A], bi Iterable[B], combine func(A, B) (C, error)) Iterable[C] {
-	return func() Iterator[C] {
-		return func(yield func(C) bool) (bool, error) {
-			aMain, aStop, aPanic := ToChan(ai())
-			bMain, bStop, bPanic := ToChan(bi())
-			defer func() {
-				close(aStop)
-				close(bStop)
-			}()
-			for {
-				var a A
-				var aOk bool
-				select {
-				case a, aOk = <-aMain:
-				case p := <-aPanic:
-					return false, p
-				case p := <-bPanic:
-					return false, p
-				}
-				var b B
-				var bOk bool
-				select {
-				case b, bOk = <-bMain:
-				case p := <-aPanic:
-					return false, p
-				case p := <-bPanic:
-					return false, p
-				}
+	return func(yield func(C) bool) (bool, error) {
+		aMain, aStop, aPanic := ToChan(ai)
+		bMain, bStop, bPanic := ToChan(bi)
+		defer func() {
+			close(aStop)
+			close(bStop)
+		}()
+		for {
+			var a A
+			var aOk bool
+			select {
+			case a, aOk = <-aMain:
+			case p := <-aPanic:
+				return false, p
+			case p := <-bPanic:
+				return false, p
+			}
+			var b B
+			var bOk bool
+			select {
+			case b, bOk = <-bMain:
+			case p := <-aPanic:
+				return false, p
+			case p := <-bPanic:
+				return false, p
+			}
 
-				if aOk && bOk {
-					cb, err := combine(a, b)
-					if err != nil {
-						return false, err
-					}
-					if !yield(cb) {
-						return false, nil
-					}
-				} else if aOk || bOk {
-					return false, errors.New("iterables in mergeElements dont have the same size")
-				} else {
-					return true, nil
+			if aOk && bOk {
+				cb, err := combine(a, b)
+				if err != nil {
+					return false, err
 				}
+				if !yield(cb) {
+					return false, nil
+				}
+			} else if aOk || bOk {
+				return false, errors.New("iterables in mergeElements dont have the same size")
+			} else {
+				return true, nil
 			}
 		}
 	}
@@ -881,32 +841,30 @@ func MergeElements[A, B, C any](ai Iterable[A], bi Iterable[B], combine func(A, 
 
 // Cross is used to cross two iterables.
 func Cross[A, B, C any](a Iterable[A], b Iterable[B], cross func(A, B) (C, error)) Iterable[C] {
-	return func() Iterator[C] {
-		return func(yield func(C) bool) (bool, error) {
-			var innerErr error
-			ok, err := a()(func(a A) bool {
-				iok, ierr := b()(func(b B) bool {
-					c, cerr := cross(a, b)
-					if cerr != nil {
-						innerErr = cerr
-						return false
-					}
-					if !yield(c) {
-						return false
-					}
-					return true
-				})
-				if ierr != nil {
-					innerErr = ierr
+	return func(yield func(C) bool) (bool, error) {
+		var innerErr error
+		ok, err := a(func(a A) bool {
+			iok, ierr := b(func(b B) bool {
+				c, cerr := cross(a, b)
+				if cerr != nil {
+					innerErr = cerr
 					return false
 				}
-				return iok && ierr == nil
+				if !yield(c) {
+					return false
+				}
+				return true
 			})
-			if innerErr != nil {
-				return false, innerErr
+			if ierr != nil {
+				innerErr = ierr
+				return false
 			}
-			return ok, err
+			return iok && ierr == nil
+		})
+		if innerErr != nil {
+			return false, innerErr
 		}
+		return ok, err
 	}
 }
 
@@ -914,101 +872,93 @@ func Cross[A, B, C any](a Iterable[A], b Iterable[B], cross func(A, B) (C, error
 // Can be used to implement iir filters like a low-pass. The last item is provided
 // to allow handling of non-equidistant values.
 func IirMap[I any, R any](items Iterable[I], initial func(item I) (R, error), iir func(item I, lastItem I, last R) (R, error)) Iterable[R] {
-	return func() Iterator[R] {
-		return func(yield func(R) bool) (bool, error) {
-			isLast := false
-			var lastItem I
-			var last R
-			var innerErr error
-			ok, err := items()(func(i I) bool {
-				var err error
-				if isLast {
-					last, err = iir(i, lastItem, last)
-					if err != nil {
-						innerErr = err
-						return false
-					}
-				} else {
-					last, err = initial(i)
-					if err != nil {
-						innerErr = err
-						return false
-					}
-					isLast = true
+	return func(yield func(R) bool) (bool, error) {
+		isLast := false
+		var lastItem I
+		var last R
+		var innerErr error
+		ok, err := items(func(i I) bool {
+			var err error
+			if isLast {
+				last, err = iir(i, lastItem, last)
+				if err != nil {
+					innerErr = err
+					return false
 				}
-				lastItem = i
-				return yield(last)
-			})
-			if innerErr != nil {
-				return false, innerErr
+			} else {
+				last, err = initial(i)
+				if err != nil {
+					innerErr = err
+					return false
+				}
+				isLast = true
 			}
-			return ok, err
+			lastItem = i
+			return yield(last)
+		})
+		if innerErr != nil {
+			return false, innerErr
 		}
+		return ok, err
 	}
 }
 
 // FirstN returns the first element of an Iterable
 func FirstN[V any](items Iterable[V], n int) Iterable[V] {
-	return func() Iterator[V] {
-		return func(yield func(V) bool) (bool, error) {
-			i := 0
-			return items()(func(v V) bool {
-				if i < n {
-					i++
-					return yield(v)
-				} else {
-					return false
-				}
-			})
-		}
+	return func(yield func(V) bool) (bool, error) {
+		i := 0
+		return items(func(v V) bool {
+			if i < n {
+				i++
+				return yield(v)
+			} else {
+				return false
+			}
+		})
 	}
 }
 
 // Skip skips the first elements.
 // The number of elements to skip is given in skip.
 func Skip[V any](items Iterable[V], n int) Iterable[V] {
-	return func() Iterator[V] {
-		return func(yield func(V) bool) (bool, error) {
-			i := 0
-			return items()(func(v V) bool {
-				if i < n {
-					i++
-					return true
-				} else {
-					return yield(v)
-				}
-			})
-		}
+	return func(yield func(V) bool) (bool, error) {
+		i := 0
+		return items(func(v V) bool {
+			if i < n {
+				i++
+				return true
+			} else {
+				return yield(v)
+			}
+		})
 	}
 }
 
 // Thinning returns an iterable which skips a certain amount of elements
 // from the parent iterable. If skip is set to 1, every second element is skipped.
 // The first and the last item are always returned.
-func Thinning[V any](items Iterable[V], n int) Iterable[V] {
-	return func() Iterator[V] {
-		return func(yield func(V) bool) (bool, error) {
-			i := 0
-			var skipped V
-			ok, err := items()(func(v V) bool {
-				if i == 0 {
-					i = n
-					return yield(v)
-				} else {
-					skipped = v
-					i--
-					return true
-				}
-			})
-			if ok && err == nil {
-				if i < n {
-					return yield(skipped), nil
-				} else {
-					return true, nil
-				}
+func Thinning[V any](iter Iterable[V], n int) Iterable[V] {
+	return func(yield func(V) bool) (bool, error) {
+		i := 0
+		var skipped V
+		ok, err := iter(func(v V) bool {
+			if i == 0 {
+				i = n
+				return yield(v)
+			} else {
+				skipped = v
+				i--
+				return true
 			}
-			return ok, err
+		})
+		if ok && err == nil {
+			if i < n {
+				return yield(skipped), nil
+			} else {
+				return true, nil
+			}
 		}
+		return ok, err
 	}
 }
 
@@ -1017,7 +967,7 @@ func Reduce[V any](it Iterable[V], reduceFunc func(V, V) (V, error)) (V, error) 
 	var sum V
 	isValue := false
 	var innerErr error
-	_, err := it()(func(v V) bool {
+	_, err := it(func(v V) bool {
 		var err error
 		if isValue {
 			sum, err = reduceFunc(sum, v)
@@ -1049,7 +999,7 @@ func Reduce[V any](it Iterable[V], reduceFunc func(V, V) (V, error)) (V, error) 
 // It should always be possible to do the heavy lifting in a map operation and
 // make the reduce operation low cost.
 func ReduceParallel[V any](it Iterable[V], reduceFuncFac func() func(V, V) (V, error)) (V, error) {
-	valChan, stop, wasPanic := ToChan(it())
+	valChan, stop, wasPanic := ToChan(it)
 
 	result := make(chan V)
 	var wg sync.WaitGroup
@@ -1125,7 +1075,7 @@ func ReduceParallel[V any](it Iterable[V], reduceFuncFac func() func(V, V) (V, e
 // Useful if map and reduce are both low cost operations.
 func MapReduce[S, V any](it Iterable[V], initial S, reduceFunc func(S, V) (S, error)) (S, error) {
 	var innerErr error
-	_, err := it()(func(v V) bool {
+	_, err := it(func(v V) bool {
 		var err error
 		initial, err = reduceFunc(initial, v)
 		if err != nil {
@@ -1148,7 +1098,7 @@ func MapReduce[S, V any](it Iterable[V], initial S, reduceFunc func(S, V) (S, er
 func First[V any](in Iterable[V]) (V, bool) {
 	var first V
 	isFirst := false
-	in()(func(v V) bool {
+	in(func(v V) bool {
 		first = v
 		isFirst = true
 		return false
@@ -1160,7 +1110,7 @@ func First[V any](in Iterable[V]) (V, bool) {
 // The returned iterator still iterates all items including the first one.
 // Expensive because all items have to go through a channel.
 // Use only if the creation of the original iterator is even more expensive.
-func Peek[V any](it Iterator[V]) (Iterator[V], V, error) {
+func Peek[V any](it Iterable[V]) (Iterable[V], V, error) {
 	c, stop, panicChan := ToChan[V](it)
 	var zero V
 	var first V
