@@ -143,22 +143,26 @@ func TestEqualsPanic(t *testing.T) {
 
 func TestFirst(t *testing.T) {
 	type testCase[V any] struct {
-		name string
-		it   Iterable[V]
-		want V
-		ok   bool
+		name  string
+		it    Iterable[V]
+		want  V
+		isErr bool
 	}
 	tests := []testCase[int]{
-		{name: "empty", it: Empty[int](), want: 0, ok: false},
-		{name: "single", it: Single(2), want: 2, ok: true},
-		{name: "slice", it: Slice([]int{1, 2}), want: 1, ok: true},
+		{name: "empty", it: Empty[int](), want: 0, isErr: true},
+		{name: "single", it: Single(2), want: 2, isErr: false},
+		{name: "slice", it: Slice([]int{1, 2}), want: 1, isErr: false},
 	}
 	for _, test := range tests {
 		test := test
 		t.Run(test.name, func(t *testing.T) {
-			got, ok := First(test.it)
+			got, err := First(test.it)
+			if test.isErr {
+				assert.Error(t, err)
+			} else {
+				assert.NoError(t, err)
+			}
 			assert.EqualValues(t, test.want, got)
-			assert.EqualValues(t, test.ok, ok)
 		})
 	}
 }

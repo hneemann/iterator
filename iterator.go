@@ -1107,15 +1107,22 @@ func MapReduce[S, V any](it Iterable[V], initial S, reduceFunc func(S, V) (S, er
 
 // First returns the first item of the iterator
 // The returned bool is false if there is no item because iterator is empty.
-func First[V any](in Iterable[V]) (V, bool) {
+func First[V any](in Iterable[V]) (V, error) {
 	var first V
 	isFirst := false
-	in(func(v V) bool {
+	err := in(func(v V) bool {
 		first = v
 		isFirst = true
 		return false
 	})
-	return first, isFirst
+	if err != nil {
+		return first, err
+	}
+	if isFirst {
+		return first, nil
+	} else {
+		return first, errors.New("iterator is empty")
+	}
 }
 
 // Peek takes an iterator, gives a new iterator and the first item of the given iterator.
