@@ -279,7 +279,8 @@ func TestPeek(t *testing.T) {
 
 	it, i, err = Peek(Empty[int]())
 	assert.Equal(t, 0, i)
-	assert.Error(t, err)
+	assert.NoError(t, err)
+	assert.Nil(t, it)
 }
 
 func TestIterableCombine(t *testing.T) {

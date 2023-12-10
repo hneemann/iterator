@@ -1121,12 +1121,13 @@ func First[V any](in Iterable[V]) (V, error) {
 	if isFirst {
 		return first, nil
 	} else {
-		return first, errors.New("iterator is empty")
+		return first, errors.New("iterator in first is empty")
 	}
 }
 
 // Peek takes an iterator, gives a new iterator and the first item of the given iterator.
 // The returned iterator still iterates all items including the first one.
+// If the list is empty, the returned iterator is nil.
 // Expensive because all items have to go through a channel.
 // Use only if the creation of the original iterator is even more expensive.
 func Peek[V any](it Iterable[V]) (Iterable[V], V, error) {
@@ -1137,7 +1138,7 @@ func Peek[V any](it Iterable[V]) (Iterable[V], V, error) {
 	select {
 	case first, ok = <-c:
 		if !ok {
-			return nil, zero, errors.New("iterator is empty")
+			return nil, zero, nil
 		}
 	case p := <-panicChan:
 		return nil, zero, p
