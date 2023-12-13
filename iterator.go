@@ -452,8 +452,8 @@ func parallel[I, O any](yield func(O) bool, mapFuncFac func() func(int, I) (O, e
 
 	go func() {
 		defer func() {
-			rec := recover()
-			if rec != nil {
+			if rec := recover(); rec != nil {
+				log.Print("panic in parallel map:", rec)
 				panicChan <- toError(rec)
 			}
 		}()
@@ -1060,6 +1060,7 @@ func ReduceParallel[V, C any](it Iterable[V, C], reduceFuncFac func() func(V, V)
 			defer func() {
 				rec := recover()
 				if rec != nil {
+					log.Print("panic in reduceParallel: ", rec)
 					wasPanic <- toError(rec)
 				}
 				wg.Done()
