@@ -446,6 +446,7 @@ func parallel[I, O any](yield func(O) bool, mapFuncFac func() func(int, I) (O, e
 		case <-stop:
 			return nil, cleanUp, nil
 		case p := <-panicChan:
+			close(stop)
 			return nil, cleanUp, p
 		}
 	}
