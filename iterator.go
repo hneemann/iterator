@@ -250,14 +250,15 @@ func splitWork[I, O any](jobs <-chan container[I], closed <-chan struct{}, panic
 			for ci := range jobs {
 				o, err := mapFunc(ci.num, ci.val)
 				if err != nil {
-					panicChan <- err
-					return
+					select {
+					case panicChan <- err:
+						return
+					case <-closed:
+						return
+					}
 				}
 				select {
 				case result <- container[O]{ci.num, o}:
-					if err != nil {
-						return
-					}
 				case <-closed:
 					return
 				}
@@ -313,6 +314,7 @@ func collectResults[O any](result <-chan container[O], closed chan<- struct{}, p
 				return sendAvail(), nil
 			}
 		case p := <-panicReadAndFire:
+			close(closed)
 			return false, p
 		}
 	}
