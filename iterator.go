@@ -90,8 +90,8 @@ func ToChan[V any](it Iterator[V]) (<-chan V, chan struct{}, chan error) {
 	innerChannel := c
 	go func() {
 		defer func() {
-			rec := recover()
-			if rec != nil {
+			if rec := recover(); rec != nil {
+				log.Print("panic in ToChan: ", rec)
 				panicChan <- toError(rec)
 			}
 			close(innerChannel)
