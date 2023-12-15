@@ -557,15 +557,20 @@ func FilterParallel[V, C any](in Iterable[V, C], acceptFac func() func(V) (bool,
 }
 
 // Compact returns an iterable which contains no consecutive duplicates.
-func Compact[V, C any](items Iterable[V, C], equal func(C, V, V) (bool, error)) Iterable[V, C] {
+func Compact[V, M, C any](items Iterable[V, C], convert func(C, V) (M, error), equal func(C, M, M) (bool, error)) Iterable[V, C] {
 	return func(c C) Iterator[V] {
 		return func(yield func(V) bool) (bool, error) {
 			isLast := false
-			var last V
+			var last M
 			var innerErr error
 			ok, err := items(c)(func(v V) bool {
+				val, err := convert(c, v)
+				if err != nil {
+					innerErr = err
+					return false
+				}
 				if isLast {
-					eq, err := equal(c, last, v)
+					eq, err := equal(c, last, val)
 					if err != nil {
 						innerErr = err
 						return false
@@ -581,7 +586,7 @@ func Compact[V, C any](items Iterable[V, C], equal func(C, V, V) (bool, error)) 
 						return false
 					}
 				}
-				last = v
+				last = val
 				return true
 			})
 			if innerErr != nil {

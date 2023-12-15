@@ -682,7 +682,9 @@ func TestCompact(t *testing.T) {
 	for _, test := range tests {
 		test := test
 		t.Run(test.name, func(t *testing.T) {
-			slice, err := ToSlice(Compact(test.it, equal[int, CO])(co))
+			slice, err := ToSlice(Compact(test.it, func(c CO, i int) int {
+				return i
+			}, equal[int, CO])(co))
 			assert.NoError(t, err)
 			assert.EqualValues(t, test.want, slice)
 		})
