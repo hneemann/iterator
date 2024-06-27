@@ -46,32 +46,32 @@ func equal[V comparable, CO any](co CO, a, b V) (bool, error) {
 	return a == b, nil
 }
 
-func check[V comparable](t *testing.T, it Iterable[V, CO], items ...V) {
+func check[V comparable](t *testing.T, it Producer[V, CO], items ...V) {
 	for n := 0; n < 2; n++ {
-		checkIterator[V](t, it(co), items...)
+		checkIterator[V](t, it, items...)
 	}
 }
 
-func checkIterator[V comparable](t *testing.T, it Iterator[V], items ...V) {
-	slice, err := ToSlice(it)
+func checkIterator[V comparable](t *testing.T, it Producer[V, CO], items ...V) {
+	slice, err := ToSlice(co, it)
 	assert.NoError(t, err)
 	assert.EqualValues(t, items, slice)
 }
 
-func checkErr[V comparable](t *testing.T, it Iterable[V, CO], errMsg string, items ...V) {
+func checkErr[V comparable](t *testing.T, it Producer[V, CO], errMsg string, items ...V) {
 	for n := 0; n < 2; n++ {
-		checkErrIterator[V](t, it(co), errMsg, items...)
+		checkErrIterator[V](t, it, errMsg, items...)
 	}
 }
 
-func checkErrIterator[V comparable](t *testing.T, it Iterator[V], errMsg string, items ...V) {
-	slice, err := ToSlice(it)
+func checkErrIterator[V comparable](t *testing.T, it Producer[V, CO], errMsg string, items ...V) {
+	slice, err := ToSlice(co, it)
 	assert.Error(t, err)
 	assert.True(t, strings.Contains(err.Error(), errMsg), "err does not contain "+errMsg)
 	assert.EqualValues(t, items, slice)
 }
 
-func ints(n int) Iterable[int, CO] {
+func ints(n int) Producer[int, CO] {
 	return Generate[int, CO](n, func(i int) (int, error) {
 		return i, nil
 	})
@@ -80,7 +80,7 @@ func ints(n int) Iterable[int, CO] {
 func TestIterables(t *testing.T) {
 	type testCase[V any] struct {
 		name string
-		it   Iterable[V, CO]
+		it   Producer[V, CO]
 		want []V
 	}
 	var empty []int
@@ -97,10 +97,10 @@ func TestIterables(t *testing.T) {
 	for _, test := range tests {
 		test := test
 		t.Run(test.name, func(t *testing.T) {
-			got, err := ToSlice(test.it(co))
+			got, err := ToSlice(co, test.it)
 			assert.NoError(t, err)
 			assert.EqualValues(t, test.want, got)
-			got, err = ToSlice(test.it(co))
+			got, err = ToSlice(co, test.it)
 			assert.NoError(t, err)
 			assert.EqualValues(t, test.want, got)
 		})
@@ -114,8 +114,8 @@ func intEqual(a int, b int) (bool, error) {
 func TestEquals(t *testing.T) {
 	type testCase[V any] struct {
 		name  string
-		it1   Iterable[V, CO]
-		it2   Iterable[V, CO]
+		it1   Producer[V, CO]
+		it2   Producer[V, CO]
 		equal bool
 	}
 	tests := []testCase[int]{
@@ -131,7 +131,7 @@ func TestEquals(t *testing.T) {
 	for _, test := range tests {
 		test := test
 		t.Run(test.name, func(t *testing.T) {
-			eq, err := Equals(test.it1(co), test.it2(co), intEqual)
+			eq, err := Equals(co, co, test.it1, test.it2, intEqual)
 			assert.NoError(t, err)
 			assert.Equal(t, test.equal, eq)
 		})
@@ -147,7 +147,7 @@ func TestEqualsPanic(t *testing.T) {
 		return n, nil
 	})
 
-	eq, err := Equals(l1(co), l2(co), intEqual)
+	eq, err := Equals(co, co, l1, l2, intEqual)
 	assert.Error(t, err)
 	assert.False(t, eq)
 }
@@ -155,7 +155,7 @@ func TestEqualsPanic(t *testing.T) {
 func TestFirst(t *testing.T) {
 	type testCase[V any] struct {
 		name string
-		it   Iterable[V, CO]
+		it   Producer[V, CO]
 		want V
 		ok   bool
 	}
@@ -229,9 +229,9 @@ func TestMapReduce(t *testing.T) {
 	assert.Equal(t, 55.0, reduce)
 }
 
-func checkBreak[V any](t *testing.T, in Iterator[V], n int) {
+func checkBreak[V any](t *testing.T, in Producer[V, CO], n int) {
 	i := 0
-	in(func(v V) error {
+	in(co, func(v V) error {
 		i++
 		if i < n {
 			return nil
@@ -247,20 +247,20 @@ func checkBreak[V any](t *testing.T, in Iterator[V], n int) {
 func TestBreak(t *testing.T) {
 	type testCase[V any] struct {
 		name  string
-		it    Iterator[V]
+		it    Producer[V, CO]
 		count int
 	}
 	appended := Append(Slice[int, CO]([]int{1, 2}), Slice[int, CO]([]int{3, 4}))
-	toChan, _ := ToChan[int](ints(10)(co))
+	toChan, _ := ToChan[int](co, ints(10))
 	tests := []testCase[int]{
-		{name: "slice", it: Slice[int, CO]([]int{1, 2, 3})(co), count: 2},
-		{name: "append", it: appended(co), count: 1},
-		{name: "append", it: appended(co), count: 2},
-		{name: "append", it: appended(co), count: 3},
-		{name: "generate", it: Generate[int, CO](10, addOne)(co), count: 3},
-		{name: "map", it: Map[int](ints(4), square)(co), count: 2},
-		{name: "parallelMap", it: MapParallel[int](ints(40), func() func(int, int) (int, error) { return squareSlow })(co), count: 10},
-		{name: "filter", it: Filter[int](ints(8), isEven)(co), count: 2},
+		{name: "slice", it: Slice[int, CO]([]int{1, 2, 3}), count: 2},
+		{name: "append", it: appended, count: 1},
+		{name: "append", it: appended, count: 2},
+		{name: "append", it: appended, count: 3},
+		{name: "generate", it: Generate[int, CO](10, addOne), count: 3},
+		{name: "map", it: Map[int](ints(4), square), count: 2},
+		{name: "parallelMap", it: MapParallel[int](ints(40), func() func(int, int) (int, error) { return squareSlow }), count: 10},
+		{name: "filter", it: Filter[int](ints(8), isEven), count: 2},
 		{name: "chan", it: FromChan(toChan), count: 2},
 	}
 	for _, test := range tests {
@@ -271,8 +271,8 @@ func TestBreak(t *testing.T) {
 	}
 }
 
-func FromChan[V any](src <-chan container[V]) Iterator[V] {
-	return func(yield Consumer[V]) error {
+func FromChan[V any](src <-chan container[V]) Producer[V, CO] {
+	return func(co CO, yield Consumer[V]) error {
 		for v := range src {
 			if v.err != nil {
 				return v.err
@@ -287,8 +287,8 @@ func FromChan[V any](src <-chan container[V]) Iterator[V] {
 
 func TestChannel(t *testing.T) {
 	input := ints(10)
-	toChan, _ := ToChan[int](input(co))
-	res, err := ToSlice(FromChan(toChan))
+	toChan, _ := ToChan[int](co, input)
+	res, err := ToSlice(co, FromChan(toChan))
 	assert.NoError(t, err)
 	assert.EqualValues(t, []int{0, 1, 2, 3, 4, 5, 6, 7, 8, 9}, res)
 }
@@ -370,7 +370,7 @@ func TestIirMap(t *testing.T) {
 	})
 	expected := Generate[int, CO](10, func(n int) (int, error) { return (n + 2) * (n + 1) / 2, nil })
 
-	equals, err := Equals(ints(co), expected(co), intEqual)
+	equals, err := Equals(co, co, ints, expected, intEqual)
 	assert.NoError(t, err)
 	assert.True(t, equals)
 }
@@ -406,9 +406,9 @@ func TestIterableThinning(t *testing.T) {
 func TestParallelMap(t *testing.T) {
 	src := Generate[int, CO](20, func(n int) (int, error) { return n, nil })
 	ints := MapParallel(src, func() func(i, v int) (int, error) { return func(i, v int) (int, error) { return v * 2, nil } })
-	expected, err := ToSlice(Generate[int, CO](20, func(n int) (int, error) { return n * 2, nil })(co))
+	expected, err := ToSlice(co, Generate[int, CO](20, func(n int) (int, error) { return n * 2, nil }))
 	assert.NoError(t, err)
-	slice, err := ToSlice(ints(co))
+	slice, err := ToSlice(co, ints)
 	assert.NoError(t, err)
 	assert.EqualValues(t, expected, slice)
 }
@@ -428,13 +428,13 @@ func TestParallelMapSlow(t *testing.T) {
 			return mapResult{res: v * 2, number: n}, nil
 		}
 	})
-	expected, err := ToSlice(Generate[mapResult, CO](count, func(n int) (mapResult, error) {
+	expected, err := ToSlice(co, Generate[mapResult, CO](count, func(n int) (mapResult, error) {
 		return mapResult{res: (n + 1) * 2, number: n}, nil
-	})(co))
+	}))
 	assert.NoError(t, err)
 
 	start := time.Now()
-	slice, err := ToSlice(ints(co))
+	slice, err := ToSlice(co, ints)
 	assert.NoError(t, err)
 	assert.EqualValues(t, expected, slice)
 
@@ -474,7 +474,7 @@ func TestParallelMapPanic1(t *testing.T) {
 		}
 	})
 
-	err := ints(co)(func(i int) error {
+	err := ints(co, func(i int) error {
 		return nil
 	})
 	assert.Error(t, err)
@@ -494,7 +494,7 @@ func TestParallelMapPanic2(t *testing.T) {
 		}
 	})
 
-	err := ints(co)(func(i int) error {
+	err := ints(co, func(i int) error {
 		return nil
 	})
 	assert.Error(t, err)
@@ -511,13 +511,13 @@ func TestAutoMap(t *testing.T) {
 			return mapResult{res: v * 2, number: n}, nil
 		}
 	})
-	expected, err := ToSlice(Generate[mapResult, CO](count, func(n int) (mapResult, error) {
+	expected, err := ToSlice(co, Generate[mapResult, CO](count, func(n int) (mapResult, error) {
 		return mapResult{res: (n + 1) * 2, number: n}, nil
-	})(co))
+	}))
 	assert.NoError(t, err)
 
 	start := time.Now()
-	slice, err := ToSlice(ints(co))
+	slice, err := ToSlice(co, ints)
 	assert.NoError(t, err)
 	measuredTime := time.Now().Sub(start)
 	worstTime := time.Duration(count) * delay
@@ -536,7 +536,7 @@ func TestAutoMap(t *testing.T) {
 			return mapResult{res: v * 2, number: n}, nil
 		}
 	})
-	toSlice, err := ToSlice(ints(co))
+	toSlice, err := ToSlice(co, ints)
 	assert.NoError(t, err)
 	assert.EqualValues(t, expected, toSlice)
 }
@@ -549,12 +549,12 @@ func TestAutoMapShort(t *testing.T) {
 			return v * 2, nil
 		}
 	})
-	expected, err := ToSlice(Generate[int, CO](count, func(n int) (int, error) { return (n + 1) * 2, nil })(co))
+	expected, err := ToSlice(co, Generate[int, CO](count, func(n int) (int, error) { return (n + 1) * 2, nil }))
 	assert.NoError(t, err)
-	slice, err := ToSlice(ints(co))
+	slice, err := ToSlice(co, ints)
 	assert.NoError(t, err)
 	assert.EqualValues(t, expected, slice)
-	toSlice, err := ToSlice(ints(co))
+	toSlice, err := ToSlice(co, ints)
 	assert.NoError(t, err)
 	assert.EqualValues(t, expected, toSlice)
 }
@@ -572,7 +572,7 @@ func TestAutoMapPanicEarly1(t *testing.T) {
 		}
 	})
 
-	err := ints(co)(func(i int) error {
+	err := ints(co, func(i int) error {
 		return nil
 	})
 	assert.Error(t, err)
@@ -590,7 +590,7 @@ func TestAutoMapPanicEarly2(t *testing.T) {
 		}
 	})
 
-	err := ints(co)(func(i int) error {
+	err := ints(co, func(i int) error {
 		return nil
 	})
 	assert.Error(t, err)
@@ -611,7 +611,7 @@ func TestAutoMapPanic(t *testing.T) {
 		}
 	})
 
-	err := ints(co)(func(i int) error {
+	err := ints(co, func(i int) error {
 		return nil
 	})
 	assert.Error(t, err)
@@ -628,11 +628,11 @@ func TestAutoFilter(t *testing.T) {
 			return v%2 == 0, nil
 		}
 	})
-	expected, err := ToSlice(Generate[int, CO](count/2, func(n int) (int, error) { return (n + 1) * 2, nil })(co))
+	expected, err := ToSlice(co, Generate[int, CO](count/2, func(n int) (int, error) { return (n + 1) * 2, nil }))
 	assert.NoError(t, err)
 
 	start := time.Now()
-	slice, err := ToSlice(ints(co))
+	slice, err := ToSlice(co, ints)
 	assert.NoError(t, err)
 	measuredTime := time.Now().Sub(start)
 	worstTime := time.Duration(count) * delay
@@ -648,7 +648,7 @@ func TestAutoFilter(t *testing.T) {
 	assert.True(t, measuredTime < (expectedTime+worstTime)/2, "to slow")
 
 	assert.EqualValues(t, expected, slice)
-	toSlice, err := ToSlice(ints(co))
+	toSlice, err := ToSlice(co, ints)
 	assert.NoError(t, err)
 	assert.EqualValues(t, expected, toSlice)
 }
@@ -661,13 +661,13 @@ func TestAutoFilterSerial(t *testing.T) {
 			return v%2 == 0, nil
 		}
 	})
-	expected, err := ToSlice(Generate[int, CO](count/2, func(n int) (int, error) { return (n + 1) * 2, nil })(co))
+	expected, err := ToSlice(co, Generate[int, CO](count/2, func(n int) (int, error) { return (n + 1) * 2, nil }))
 	assert.NoError(t, err)
 
-	slice, err := ToSlice(ints(co))
+	slice, err := ToSlice(co, ints)
 	assert.NoError(t, err)
 	assert.EqualValues(t, expected, slice)
-	toSlice, err := ToSlice(ints(co))
+	toSlice, err := ToSlice(co, ints)
 	assert.NoError(t, err)
 	assert.EqualValues(t, expected, toSlice)
 }
@@ -681,13 +681,13 @@ func TestAutoFilterShort(t *testing.T) {
 			return v%2 == 0, nil
 		}
 	})
-	expected, err := ToSlice(Generate[int, CO](count/2, func(n int) (int, error) { return (n + 1) * 2, nil })(co))
+	expected, err := ToSlice(co, Generate[int, CO](count/2, func(n int) (int, error) { return (n + 1) * 2, nil }))
 	assert.NoError(t, err)
 
-	slice, err := ToSlice(ints(co))
+	slice, err := ToSlice(co, ints)
 	assert.NoError(t, err)
 	assert.EqualValues(t, expected, slice)
-	toSlice, err := ToSlice(ints(co))
+	toSlice, err := ToSlice(co, ints)
 	assert.NoError(t, err)
 	assert.EqualValues(t, expected, toSlice)
 }
@@ -695,7 +695,7 @@ func TestAutoFilterShort(t *testing.T) {
 func TestCompact(t *testing.T) {
 	type testCase struct {
 		name string
-		it   Iterable[int, CO]
+		it   Producer[int, CO]
 		want []int
 	}
 	var empty []int
@@ -709,9 +709,9 @@ func TestCompact(t *testing.T) {
 	for _, test := range tests {
 		test := test
 		t.Run(test.name, func(t *testing.T) {
-			slice, err := ToSlice(Compact(test.it, func(c CO, i int) (int, error) {
+			slice, err := ToSlice(co, Compact(test.it, func(c CO, i int) (int, error) {
 				return i, nil
-			}, equal[int, CO])(co))
+			}, equal[int, CO]))
 			assert.NoError(t, err)
 			assert.EqualValues(t, test.want, slice)
 		})
@@ -721,7 +721,7 @@ func TestCompact(t *testing.T) {
 func TestGroup(t *testing.T) {
 	type testCase struct {
 		name string
-		it   Iterable[int, CO]
+		it   Producer[int, CO]
 		want [][]int
 	}
 	var empty [][]int
@@ -735,11 +735,11 @@ func TestGroup(t *testing.T) {
 	for _, test := range tests {
 		test := test
 		t.Run(test.name, func(t *testing.T) {
-			got, err := ToSlice(Group(test.it, equal[int, CO])(co))
+			got, err := ToSlice(co, Group(test.it, equal[int, CO]))
 			assert.NoError(t, err)
 			assert.Equal(t, len(test.want), len(got))
 			for i, w := range test.want {
-				g, err := ToSlice(got[i](co))
+				g, err := ToSlice(co, got[i])
 				assert.NoError(t, err)
 				assert.EqualValues(t, w, g)
 			}
@@ -759,7 +759,7 @@ func TestSplit(t *testing.T) {
 		j := i
 		go func() {
 			defer wg.Done()
-			got, err := ToSlice(split[j](co))
+			got, err := ToSlice(co, split[j])
 			assert.NoError(t, err)
 			assert.Equal(t, size, len(got))
 			for k, g := range got {
@@ -784,7 +784,7 @@ func TestSplitTerminate(t *testing.T) {
 		j := i
 		go func() {
 			defer wg.Done()
-			got, err := ToSlice(FirstN(split[j], j+1)(co))
+			got, err := ToSlice(co, FirstN(split[j], j+1))
 			assert.NoError(t, err)
 			assert.Equal(t, j+1, len(got))
 			for k, g := range got {
@@ -814,7 +814,7 @@ func TestSplitError(t *testing.T) {
 		j := i
 		go func() {
 			defer wg.Done()
-			got, err := ToSlice(split[j](co))
+			got, err := ToSlice(co, split[j])
 			assert.NoError(t, err)
 			assert.Equal(t, 50, len(got))
 			for k, g := range got {
