@@ -862,11 +862,11 @@ func (ih *itHolder[V, C]) createIt() Producer[V, C] {
 // CopyProducer copies the initial producer into num identical producers.
 // The returned producers can be used in parallel to process the input in.
 //
-// The prodList contains the copied producers.
+// The return values are:
 //
-// The run function needs to be called with the consumer context to start reading the given producer.
-//
-// The doneFunc needs to be called once from every created go routine. If no error has occurred, the error is nil.
+//	The prodList contains the copied producers.
+//	The run function needs to be called with the consumer context to start reading the given producer.
+//	The doneFunc needs to be called once from every created go routine which calls one of the created producers. If no error has occurred, the error is nil.
 func CopyProducer[V, C any](in Producer[V, C], num int) (prodList []Producer[V, C], run func(C) error, doneFunc func(error)) {
 	innerDone := make(chan struct{})
 
