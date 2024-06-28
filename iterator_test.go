@@ -7,7 +7,6 @@ import (
 	"log"
 	"runtime"
 	"strings"
-	"sync"
 	"testing"
 	"time"
 )
@@ -751,50 +750,44 @@ func TestSplit(t *testing.T) {
 	const size = 100
 	ints := Generate[int, CO](size, func(i int) (int, error) { return i, nil })
 
-	split, run, _ := CopyIterator[int, CO](ints, 10)
+	split, run, done := CopyProducer[int, CO](ints, 10)
 
-	var wg sync.WaitGroup
 	for i := 0; i < 10; i++ {
-		wg.Add(1)
 		j := i
 		go func() {
-			defer wg.Done()
 			got, err := ToSlice(co, split[j])
 			assert.NoError(t, err)
 			assert.Equal(t, size, len(got))
 			for k, g := range got {
 				assert.Equal(t, k, g)
 			}
+			done(err)
 		}()
 	}
 	err := run(co)
 	assert.NoError(t, err)
-	wg.Wait()
 }
 
 func TestSplitTerminate(t *testing.T) {
 	const size = 100
 	ints := Generate[int, CO](size, func(i int) (int, error) { return i, nil })
 
-	split, run, _ := CopyIterator[int, CO](ints, 10)
+	split, run, done := CopyProducer[int, CO](ints, 10)
 
-	var wg sync.WaitGroup
 	for i := 0; i < 10; i++ {
-		wg.Add(1)
 		j := i
 		go func() {
-			defer wg.Done()
 			got, err := ToSlice(co, FirstN(split[j], j+1))
 			assert.NoError(t, err)
 			assert.Equal(t, j+1, len(got))
 			for k, g := range got {
 				assert.Equal(t, k, g)
 			}
+			done(err)
 		}()
 	}
 	err := run(co)
 	assert.NoError(t, err)
-	wg.Wait()
 }
 
 func TestSplitError(t *testing.T) {
@@ -806,33 +799,34 @@ func TestSplitError(t *testing.T) {
 		return i, nil
 	})
 
-	split, run, _ := CopyIterator[int, CO](ints, 10)
+	split, run, done := CopyProducer[int, CO](ints, 10)
 
-	var wg sync.WaitGroup
 	for i := 0; i < 10; i++ {
-		wg.Add(1)
 		j := i
 		go func() {
-			defer wg.Done()
 			got, err := ToSlice(co, split[j])
 			assert.NoError(t, err)
 			assert.Equal(t, 50, len(got))
 			for k, g := range got {
 				assert.Equal(t, k, g)
 			}
+			done(err)
 		}()
 	}
 	err := run(co)
 	assert.Error(t, err)
 	assert.Equal(t, "test", err.Error())
-	wg.Wait()
 }
 
 func TestSplitDontUse(t *testing.T) {
 	const size = 100
 	ints := Generate[int, CO](size, func(i int) (int, error) { return i, nil })
 
-	_, run, _ := CopyIterator[int, CO](ints, 10)
+	_, run, done := CopyProducer[int, CO](ints, 10)
+
+	for i := 0; i < 10; i++ {
+		done(nil)
+	}
 
 	err := run(co)
 	assert.Error(t, err)

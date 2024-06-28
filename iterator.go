@@ -4,7 +4,6 @@ import (
 	"errors"
 	"runtime"
 	"sync"
-	"sync/atomic"
 	"time"
 )
 
@@ -841,10 +840,12 @@ type itHolder[V, C any] struct {
 }
 
 func (ih *itHolder[V, C]) createIt() Producer[V, C] {
+	used := false
 	return func(c C, yield Consumer[V]) error {
-		if ih.c == nil {
+		if used {
 			return errors.New("copied iterator a can only be used once")
 		}
+		used = true
 		for v := range ih.c {
 			if e := yield(v); e != nil {
 				select {
@@ -854,59 +855,84 @@ func (ih *itHolder[V, C]) createIt() Producer[V, C] {
 				return e
 			}
 		}
-		ih.c = nil
 		return nil
 	}
 }
 
-// CopyIterator copies the input iterable into num identical iterables.
-// The returned iterables can be used in parallel to process the input in.
-// The returned function needs to be called with the consumer context and
-// returns an error if the producer returns an error.
-func CopyIterator[V, C any](in Producer[V, C], num int) ([]Producer[V, C], func(C) error, func()) {
-	done := make(chan struct{})
+// CopyProducer copies the initial producer into num identical producers.
+// The returned producers can be used in parallel to process the input in.
+//
+// The prodList contains the copied producers.
+//
+// The run function needs to be called with the consumer context to start reading the given producer.
+//
+// The doneFunc needs to be called once from every created go routine. If no error has occurred, the error is nil.
+func CopyProducer[V, C any](in Producer[V, C], num int) (prodList []Producer[V, C], run func(C) error, doneFunc func(error)) {
+	innerDone := make(chan struct{})
 
 	var ihl []*itHolder[V, C]
-	var il []Producer[V, C]
 	for i := 0; i < num; i++ {
 		ih := &itHolder[V, C]{
 			num:  i,
 			c:    make(chan V),
 			err:  make(chan error),
-			done: done,
+			done: innerDone,
 		}
 		ihl = append(ihl, ih)
-		il = append(il, ih.createIt())
+		prodList = append(prodList, ih.createIt())
 	}
 
-	prodDone := make(chan struct{})
+	var mainErrMutex sync.Mutex
+	mainErrSet := make(chan struct{})
+	mainErrSetClosed := false
+	var mainErr error = nil
 
-	run := func(c C) error {
-		defer close(done)
+	wg := sync.WaitGroup{}
+	wg.Add(num)
+
+	doneFunc = func(e error) {
+		mainErrMutex.Lock()
+		defer mainErrMutex.Unlock()
+
+		if e != nil {
+			if !mainErrSetClosed {
+				mainErr = e
+				close(mainErrSet)
+				mainErrSetClosed = true
+			}
+		}
+
+		wg.Done()
+	}
+
+	run = func(c C) error {
+		defer close(innerDone)
 
 		running := num
-		var mainErr error
 		err := in(c, func(v V) error {
-			if mainErr != nil {
-				return mainErr
-			}
 			for _, ih := range ihl {
 				if !ih.ended {
 					select {
 					case ih.c <- v:
-					case <-prodDone:
-						ih.ended = true
-						running--
-						return errors.New("producer interrupted")
+					case <-mainErrSet:
+						return mainErr
 					case err := <-ih.err:
-						ih.ended = true
-						running--
-						if err != SBC {
-							mainErr = err
-							return mainErr
-						}
-						if running == 0 {
-							return SBC
+						if err == SBC {
+							ih.ended = true
+							running--
+							if running == 0 {
+								return SBC
+							}
+						} else {
+							mainErrMutex.Lock()
+							defer mainErrMutex.Unlock()
+
+							if !mainErrSetClosed {
+								mainErr = err
+								close(mainErrSet)
+								mainErrSetClosed = true
+							}
+							return err
 						}
 					case <-time.After(5 * time.Second):
 						return errors.New("timeout; Are all copied iterators used?")
@@ -918,16 +944,18 @@ func CopyIterator[V, C any](in Producer[V, C], num int) ([]Producer[V, C], func(
 		for _, ih := range ihl {
 			close(ih.c)
 		}
+
+		wg.Wait()
+
+		if err == nil && mainErr != nil {
+			return mainErr
+		}
+
 		if err == SBC {
 			return nil
 		}
 		return err
 	}
 
-	var isClosed atomic.Bool
-	return il, run, func() {
-		if !isClosed.CompareAndSwap(false, true) {
-			close(prodDone)
-		}
-	}
+	return
 }
