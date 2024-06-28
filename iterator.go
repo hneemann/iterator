@@ -894,7 +894,7 @@ func CopyProducer[V, C any](in Producer[V, C], num int) (prodList []Producer[V, 
 		mainErrMutex.Lock()
 		defer mainErrMutex.Unlock()
 
-		if e != nil {
+		if e != nil && e != SBC {
 			if !mainErrSetClosed {
 				mainErr = e
 				close(mainErrSet)
