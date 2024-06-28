@@ -2,6 +2,7 @@ package iterator
 
 import (
 	"errors"
+	"log"
 	"runtime"
 	"sync"
 	"time"
@@ -246,18 +247,192 @@ func MapParallel[I, O, C any](in Producer[I, C], mapFuncFac func() func(int, I) 
 	}
 }
 
-// MapAuto behaves the same as the Map Iterable.
-// It is measured how long the map function takes. If the map function requires so much
-// computing time that it is worth distributing it over several cores, the map function
-// is distributed over all available cores (reported by runtime.NumCPU()).
-func MapAuto[I, O, C any](in Producer[I, C], mapFuncFac func() func(int, I) (O, error)) Producer[O, C] {
-	return MapParallel(in, mapFuncFac)
+type mapConsumer[I, O any] interface {
+	doMap(num int, item I) (error, mapConsumer[I, O])
+	done(err error) error
 }
 
 const (
 	itemProcessingTimeMicroSec = 200
 	itemsToMeasure             = 11
 )
+
+type measureConsumer[I, O any] struct {
+	mapFuncFac func() func(int, I) (O, error)
+	mapFunc    func(int, I) (O, error)
+	yield      Consumer[O]
+	dur        time.Duration
+	count      int
+}
+
+func (m *measureConsumer[I, O]) doMap(num int, item I) (error, mapConsumer[I, O]) {
+	start := time.Now()
+	o, err := m.mapFunc(num, item)
+	dur := time.Since(start)
+
+	if num > 0 {
+		m.dur += dur
+		m.count++
+	}
+
+	var next mapConsumer[I, O]
+
+	if num == itemsToMeasure {
+		durPerItem := m.dur.Microseconds() / int64(m.count)
+		//log.Printf("duration per item: %d\n", durPerItem)
+		if durPerItem < itemProcessingTimeMicroSec {
+			//log.Println("sequential")
+			next = &sequentialConsumer[I, O]{mapFunc: m.mapFunc, yield: m.yield}
+		} else {
+			log.Println("use parallel computing")
+			next = createParallelConsumer[I, O](m.mapFuncFac, m.yield, num+1)
+		}
+	}
+
+	if err != nil {
+		return err, next
+	}
+	if e := m.yield(o); e != nil {
+		return e, next
+	}
+	return nil, next
+}
+
+func (m *measureConsumer[I, O]) done(err error) error {
+	return err
+}
+
+type sequentialConsumer[I, O any] struct {
+	mapFunc func(int, I) (O, error)
+	yield   Consumer[O]
+}
+
+func (m *sequentialConsumer[I, O]) doMap(num int, item I) (error, mapConsumer[I, O]) {
+	o, err := m.mapFunc(num, item)
+	if err != nil {
+		return err, nil
+	}
+	if e := m.yield(o); e != nil {
+		return e, nil
+	}
+	return nil, nil
+}
+
+func (m *sequentialConsumer[I, O]) done(err error) error {
+	return err
+}
+
+func createParallelConsumer[I, O any](mapFuncFac func() func(int, I) (O, error), yield Consumer[O], num int) mapConsumer[I, O] {
+	c := make(chan container[I])
+	r := make(chan container[O])
+	errOccurred := make(chan struct{})
+	errChan := make(chan error)
+
+	var wg sync.WaitGroup
+	for i := 0; i < runtime.NumCPU(); i++ {
+		wg.Add(1)
+		go func(ma func(int, I) (O, error)) {
+			defer wg.Done()
+			for ci := range c {
+				o, err := ma(ci.num, ci.val)
+				select {
+				case r <- container[O]{num: ci.num, val: o, err: err}:
+				case <-errOccurred:
+					return
+				}
+			}
+		}(mapFuncFac())
+	}
+	go func() {
+		wg.Wait()
+		close(r)
+	}()
+	go func() {
+		cache := make(map[int]O)
+		for co := range r {
+			if co.err != nil {
+				close(errOccurred)
+				errChan <- co.err
+				return
+			}
+			if co.num == num {
+				if e := yield(co.val); e != nil {
+					close(errOccurred)
+					errChan <- co.err
+				}
+				num++
+				for {
+					if o, ok := cache[num]; ok {
+						if e := yield(o); e != nil {
+							close(errOccurred)
+							errChan <- co.err
+						}
+						delete(cache, num)
+						num++
+					} else {
+						break
+					}
+				}
+			} else {
+				cache[co.num] = co.val
+			}
+		}
+		errChan <- nil
+	}()
+
+	return &parallelConsumer[I, O]{c: c, errChan: errChan, errOccurred: errOccurred}
+}
+
+type parallelConsumer[I, O any] struct {
+	c           chan<- container[I]
+	errChan     chan error
+	errOccurred chan struct{}
+}
+
+func (m *parallelConsumer[I, O]) doMap(num int, item I) (error, mapConsumer[I, O]) {
+	select {
+	case m.c <- container[I]{num: num, val: item}:
+	case <-m.errOccurred:
+		return SBC, nil
+	}
+	return nil, nil
+}
+
+func (m *parallelConsumer[I, O]) done(err error) error {
+	close(m.c)
+
+	e := <-m.errChan
+	if e != nil {
+		return e
+	}
+	return err
+}
+
+// MapAuto behaves the same as the Map Iterable.
+// It is measured how long the map function takes. If the map function requires so much
+// computing time that it is worth distributing it over several cores, the map function
+// is distributed over all available cores (reported by runtime.NumCPU()).
+func MapAuto[I, O, C any](in Producer[I, C], mapFuncFac func() func(int, I) (O, error)) Producer[O, C] {
+	if runtime.NumCPU() == 1 {
+		return Map(in, mapFuncFac())
+	}
+	return func(c C, yield Consumer[O]) error {
+		var innerConsumer mapConsumer[I, O] = &measureConsumer[I, O]{mapFuncFac: mapFuncFac, mapFunc: mapFuncFac(), yield: yield}
+		num := 0
+		err := in(c, func(item I) error {
+			err, next := innerConsumer.doMap(num, item)
+			if err != nil {
+				return err
+			}
+			if next != nil {
+				innerConsumer = next
+			}
+			num++
+			return nil
+		})
+		return innerConsumer.done(err)
+	}
+}
 
 // Filter filters the given Iterable by the given accept function
 func Filter[V, C any](in Producer[V, C], accept func(V) (bool, error)) Producer[V, C] {
