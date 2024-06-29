@@ -202,40 +202,40 @@ type measureConsumer[I, O any] struct {
 	count      int
 }
 
-func (m *measureConsumer[I, O]) doMap(num int, item I) (error, mapConsumer[I, O]) {
+func (mc *measureConsumer[I, O]) doMap(num int, item I) (error, mapConsumer[I, O]) {
 	start := time.Now()
-	o, err := m.mapFunc(num, item)
+	o, err := mc.mapFunc(num, item)
 	dur := time.Since(start)
 
 	if num > 0 {
-		m.dur += dur
-		m.count++
+		mc.dur += dur
+		mc.count++
 	}
 
-	var next mapConsumer[I, O]
+	var next mapConsumer[I, O] = mc
 
 	if num == itemsToMeasure {
-		durPerItem := m.dur.Microseconds() / int64(m.count)
+		durPerItem := mc.dur.Microseconds() / int64(mc.count)
 		//log.Printf("duration per item: %d\n", durPerItem)
 		if durPerItem < itemProcessingTimeMicroSec {
-			//log.Println("sequential")
-			next = &sequentialConsumer[I, O]{mapFunc: m.mapFunc, yield: m.yield}
+			log.Println("sequential mapping")
+			next = &sequentialConsumer[I, O]{mapFunc: mc.mapFunc, yield: mc.yield}
 		} else {
-			log.Println("use parallel computing")
-			next = createParallelConsumer[I, O](m.mapFuncFac, m.yield, num+1)
+			log.Println("parallel mapping")
+			next = createParallelConsumer[I, O](mc.mapFuncFac, mc.yield, num+1)
 		}
 	}
 
 	if err != nil {
 		return err, next
 	}
-	if e := m.yield(o); e != nil {
+	if e := mc.yield(o); e != nil {
 		return e, next
 	}
 	return nil, next
 }
 
-func (m *measureConsumer[I, O]) done(err error) error {
+func (mc *measureConsumer[I, O]) done(err error) error {
 	return err
 }
 
@@ -244,18 +244,18 @@ type sequentialConsumer[I, O any] struct {
 	yield   Consumer[O]
 }
 
-func (m *sequentialConsumer[I, O]) doMap(num int, item I) (error, mapConsumer[I, O]) {
-	o, err := m.mapFunc(num, item)
+func (sc *sequentialConsumer[I, O]) doMap(num int, item I) (error, mapConsumer[I, O]) {
+	o, err := sc.mapFunc(num, item)
 	if err != nil {
-		return err, nil
+		return err, sc
 	}
-	if e := m.yield(o); e != nil {
-		return e, nil
+	if e := sc.yield(o); e != nil {
+		return e, sc
 	}
-	return nil, nil
+	return nil, sc
 }
 
-func (m *sequentialConsumer[I, O]) done(err error) error {
+func (sc *sequentialConsumer[I, O]) done(err error) error {
 	return err
 }
 
@@ -328,19 +328,19 @@ type parallelConsumer[I, O any] struct {
 	errOccurred chan struct{}
 }
 
-func (m *parallelConsumer[I, O]) doMap(num int, item I) (error, mapConsumer[I, O]) {
+func (pc *parallelConsumer[I, O]) doMap(num int, item I) (error, mapConsumer[I, O]) {
 	select {
-	case m.c <- container[I]{num: num, val: item}:
-	case <-m.errOccurred:
-		return SBC, nil
+	case pc.c <- container[I]{num: num, val: item}:
+	case <-pc.errOccurred:
+		return SBC, pc
 	}
-	return nil, nil
+	return nil, pc
 }
 
-func (m *parallelConsumer[I, O]) done(err error) error {
-	close(m.c)
+func (pc *parallelConsumer[I, O]) done(err error) error {
+	close(pc.c)
 
-	e := <-m.errChan
+	e := <-pc.errChan
 	if e != nil {
 		return e
 	}
@@ -356,20 +356,18 @@ func MapAuto[I, O, C any](in Producer[I, C], mapFuncFac func() func(int, I) (O, 
 		return Map(in, mapFuncFac())
 	}
 	return func(c C, yield Consumer[O]) error {
-		var innerConsumer mapConsumer[I, O] = &measureConsumer[I, O]{mapFuncFac: mapFuncFac, mapFunc: mapFuncFac(), yield: yield}
+		var con mapConsumer[I, O] = &measureConsumer[I, O]{mapFuncFac: mapFuncFac, mapFunc: mapFuncFac(), yield: yield}
 		num := 0
 		err := in(c, func(item I) error {
-			err, next := innerConsumer.doMap(num, item)
+			var err error
+			err, con = con.doMap(num, item)
+			num++
 			if err != nil {
 				return err
 			}
-			if next != nil {
-				innerConsumer = next
-			}
-			num++
 			return nil
 		})
-		return innerConsumer.done(err)
+		return con.done(err)
 	}
 }
 
