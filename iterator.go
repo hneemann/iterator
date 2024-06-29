@@ -8,6 +8,9 @@ import (
 	"time"
 )
 
+// SBC is returned by the Consumer to stop the producer
+// A producer should see this error as normal termination by the consumer.
+// The producer should return this error unwrapped to its caller.
 var SBC = errors.New("stopped by consumer")
 
 // Consumer consumes elements of type V
