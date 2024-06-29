@@ -163,77 +163,6 @@ func Map[I, O, C any](in Producer[I, C], mapFunc func(int, I) (O, error)) Produc
 	}
 }
 
-func splitWork[I, O any](jobs <-chan container[I], done <-chan struct{}, mapFuncFac func() func(n int, i I) (O, error)) <-chan container[O] {
-	result := make(chan container[O])
-	wg := sync.WaitGroup{}
-	for n := 0; n < runtime.NumCPU(); n++ {
-		wg.Add(1)
-		mapFunc := mapFuncFac()
-		go func() {
-			defer wg.Done()
-			for ci := range jobs {
-				if ci.err != nil {
-					select {
-					case result <- container[O]{num: ci.num, err: ci.err}:
-					case <-done:
-					}
-					return
-				}
-				o, err := mapFunc(ci.num, ci.val)
-				select {
-				case result <- container[O]{ci.num, o, err}:
-				case <-done:
-					return
-				}
-
-			}
-		}()
-	}
-	go func() {
-		wg.Wait()
-		close(result)
-	}()
-	return result
-}
-
-func collectResults[O any](result <-chan container[O], done chan<- struct{}, yield func(o O) error, num int) error {
-	defer close(done)
-
-	store := map[int]O{}
-
-	sendAvail := func() error {
-		for {
-			if o, ok := store[num]; ok {
-				if e := yield(o); e != nil {
-					return e
-				}
-				delete(store, num)
-				num++
-			} else {
-				return nil
-			}
-		}
-	}
-
-	for co := range result {
-		if co.err != nil {
-			return co.err
-		}
-		if co.num == num {
-			if e := yield(co.val); e != nil {
-				return e
-			}
-			num++
-			if e := sendAvail(); e != nil {
-				return e
-			}
-		} else {
-			store[co.num] = co.val
-		}
-	}
-	return sendAvail()
-}
-
 // MapParallel behaves the same as the Map Iterable.
 // The mapping is distributed over all available cores.
 func MapParallel[I, O, C any](in Producer[I, C], mapFuncFac func() func(int, I) (O, error)) Producer[O, C] {
@@ -241,9 +170,17 @@ func MapParallel[I, O, C any](in Producer[I, C], mapFuncFac func() func(int, I) 
 		return Map(in, mapFuncFac())
 	}
 	return func(c C, yield Consumer[O]) error {
-		jobs, done := ToChan(c, in)
-		result := splitWork(jobs, done, mapFuncFac)
-		return collectResults(result, done, yield, 0)
+		pc := createParallelConsumer(mapFuncFac, yield, 0)
+		num := 0
+		err := in(c, func(item I) error {
+			err, _ := pc.doMap(num, item)
+			num++
+			if err != nil {
+				return err
+			}
+			return nil
+		})
+		return pc.done(err)
 	}
 }
 
@@ -359,6 +296,7 @@ func createParallelConsumer[I, O any](mapFuncFac func() func(int, I) (O, error),
 				if e := yield(co.val); e != nil {
 					close(errOccurred)
 					errChan <- co.err
+					return
 				}
 				num++
 				for {
@@ -366,6 +304,7 @@ func createParallelConsumer[I, O any](mapFuncFac func() func(int, I) (O, error),
 						if e := yield(o); e != nil {
 							close(errOccurred)
 							errChan <- co.err
+							return
 						}
 						delete(cache, num)
 						num++
