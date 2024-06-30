@@ -2,7 +2,6 @@ package iterator
 
 import (
 	"errors"
-	"log"
 	"runtime"
 	"sync"
 	"time"
@@ -219,12 +218,9 @@ func (mc *measureConsumer[I, O]) doMap(num int, item I) (error, mapConsumer[I, O
 
 	if num == itemsToMeasure {
 		durPerItem := mc.dur.Microseconds() / int64(mc.count)
-		//log.Printf("duration per item: %d\n", durPerItem)
 		if durPerItem < itemProcessingTimeMicroSec {
-			log.Println("sequential mapping")
 			next = &sequentialConsumer[I, O]{mapFunc: mc.mapFunc, yield: mc.yield}
 		} else {
-			log.Println("parallel mapping")
 			next = createParallelConsumer[I, O](mc.mapFuncFac, mc.yield, num+1)
 		}
 	}
