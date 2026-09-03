@@ -307,6 +307,10 @@ func MapParallel[I, O any](p Producer[I], mapperFac func() func(i int, v I) (O, 
 // measuring the processing time of the first elements. If the processing time per
 // item is above a certain threshold, parallel processing is used.
 func MapAuto[I, O any](p Producer[I], mapperFac func() func(i int, v I) (O, error)) Producer[O] {
+	return mapAutoTime(p, mapperFac, itemProcessingTimeMicroSec)
+}
+
+func mapAutoTime[I, O any](p Producer[I], mapperFac func() func(i int, v I) (O, error), itemProcessingTimeMicroSec int64) Producer[O] {
 	if runtime.NumCPU() == 1 {
 		return Map(p, mapperFac())
 	}
@@ -325,7 +329,7 @@ func MapAuto[I, O any](p Producer[I], mapperFac func() func(i int, v I) (O, erro
 				start = time.Now()
 			} else if i == itemsToMeasure+1 {
 				durationPerMap := time.Now().Sub(start) / itemsToMeasure
-				if durationPerMap.Microseconds() > itemProcessingTimeMicroSec {
+				if durationPerMap.Microseconds() >= itemProcessingTimeMicroSec {
 					source = make(chan container[I])
 					done = make(chan struct{})
 					para = initParallel[I, O](i, yield, source, mapperFac, done)

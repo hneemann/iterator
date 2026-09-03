@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"github.com/stretchr/testify/assert"
 	"log"
+	"math/cmplx"
 	"runtime"
 	"strings"
 	"testing"
@@ -640,6 +641,32 @@ func TestAutoMapPanic(t *testing.T) {
 	}
 	assert.Error(t, err)
 	assert.Equal(t, "test", err.Error())
+}
+
+func TestAutoMapNested(t *testing.T) {
+	count := 200000
+	src := Generate[int](count, func(n int) (int, error) { return n, nil })
+	ints := mapAutoTime[int, int](src, func() func(n, v int) (int, error) {
+		return func(n, v int) (int, error) {
+			r := float64(v) / float64(count) * 2
+			c := complex(r, r)
+			z := complex(0, 0)
+			for range 200000 {
+				z = z*z + c
+				if cmplx.Abs(z) > 2 {
+					return 1, nil
+				}
+			}
+			return 0, nil
+		}
+	}, 0)
+	sum, err := ReduceParallel(ints, func() func(a int, b int) (int, error) {
+		return func(a int, b int) (int, error) {
+			return a + b, nil
+		}
+	})
+	assert.NoError(t, err)
+	assert.Equal(t, 164991, sum)
 }
 
 func TestAutoFilter(t *testing.T) {
